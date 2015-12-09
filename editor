@@ -48,11 +48,15 @@ def main(stdscr):
         curses.COLS -STATUS_WINDOW_WIDTH,
         curses.LINES - 1,
         STATUS_WINDOW_WIDTH)
-    bindings_window.addstr(0, 0, "Use 'hjkl' to move, insert, append, Quit.")
+    bindings_window.addstr(0, 0, (
+            "Use 'hjkl' to move, insert, append, "
+            "x to remove, X for remove mode, Quit."))
     bindings_window.chgat(0, 5, 4, curses.A_BOLD | curses.color_pair(2))
     bindings_window.chgat(0, 20, 1, curses.A_BOLD | curses.color_pair(2))
     bindings_window.chgat(0, 28, 1, curses.A_BOLD | curses.color_pair(2))
-    bindings_window.chgat(0, 36, 1, curses.A_BOLD | curses.color_pair(1))
+    bindings_window.chgat(0, 36, 1, curses.A_BOLD | curses.color_pair(2))
+    bindings_window.chgat(0, 49, 1, curses.A_BOLD | curses.color_pair(2))
+    bindings_window.chgat(0, 68, 1, curses.A_BOLD | curses.color_pair(1))
 
     container_window = curses.newwin(curses.LINES - 2, curses.COLS, 1, 0)
     main_window = container_window.subwin(
@@ -69,6 +73,7 @@ def main(stdscr):
 
     scene = collections.defaultdict(lambda: collections.defaultdict(list))
     is_append_mode = False
+    is_remove_mode = False
     tile_to_append = None
     is_refresh_main = False
     window_refresh_queue = []
@@ -82,22 +87,57 @@ def main(stdscr):
             cursor_x += dx
             if is_append_mode:
                 scene[cursor_y][cursor_x].append(tile_to_append)
+            if is_remove_mode:
+                try:
+                    scene[cursor_y][cursor_x].pop()
+                except IndexError:
+                    pass
+                if not scene[cursor_y][cursor_x]:
+                    del scene[cursor_y][cursor_x]
             heapq.heappush(window_refresh_queue, (2, main_window))
             is_refresh_main = True
         elif ch == 'i':
             scene[cursor_y][cursor_x].append(Tile('wall'))
-        elif ord(ch) == 27 or ch == 'a' and is_append_mode:  # Esc.
+        elif ord(ch) == 27 \
+                or ch == 'a' and is_append_mode \
+                or ch == 'X' and is_remove_mode:
             is_append_mode = False
+            if is_remove_mode:
+                heapq.heappush(window_refresh_queue, (2, main_window))
+                is_refresh_main = True
+                is_remove_mode = False
             status_window.clear()
             heapq.heappush(window_refresh_queue, (4, status_window))
         elif ch == 'a':
             tile_to_append = Tile('wall')
             scene[cursor_y][cursor_x].append(tile_to_append)
             is_append_mode = True
+            is_remove_mode = False
             status_window.clear()
             status_window.addstr(0, 0, "-- APPEND ({}) --".format(
                 tile_to_append.char))
             heapq.heappush(window_refresh_queue, (4, status_window))
+        elif ch == 'x':
+            try:
+                scene[cursor_y][cursor_x].pop()
+            except IndexError:
+                pass
+            if not scene[cursor_y][cursor_x]:
+                del scene[cursor_y][cursor_x]
+        elif ch == 'X':
+            is_remove_mode = True
+            is_append_mode = False
+            try:
+                scene[cursor_y][cursor_x].pop()
+            except IndexError:
+                pass
+            if not scene[cursor_y][cursor_x]:
+                del scene[cursor_y][cursor_x]
+            status_window.clear()
+            status_window.addstr(0, 0, "-- REMOVE --")
+            heapq.heappush(window_refresh_queue, (4, status_window))
+            heapq.heappush(window_refresh_queue, (2, main_window))
+            is_refresh_main = True
         elif ch.lower() == 'q':
             break
 
@@ -110,7 +150,9 @@ def main(stdscr):
                             y, x, scene[y][x][-1].char, curses.color_pair(4))
                     else:
                         main_window.addstr(y, x, scene[y][x][-1].char)
-            main_window.addstr(cursor_y, cursor_x, CURSOR, curses.color_pair(3))
+            color_pair = 1 if is_remove_mode else 3
+            main_window.addstr(
+                cursor_y, cursor_x, CURSOR, curses.color_pair(color_pair))
             is_refresh_main = False
 
         # Refresh all windows bottom up to prevent flickering.
