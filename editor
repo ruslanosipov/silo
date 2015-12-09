@@ -2,9 +2,11 @@
 
 import collections
 import curses
+import heapq
 
 CURSOR = "X"
 MOVEMENTS = {'h': (0, -1), 'j': (1, 0), 'k': (-1, 0), 'l': (0, 1)}
+STATUS_WINDOW_WIDTH = 17
 TILE_TYPES = {'wall': '#'}
 
 
@@ -15,7 +17,7 @@ class Tile(object):
             self.char = TILE_TYPES[tile_type]
         except KeyError:
             raise ValueError(
-                    "Tried to init unknown tile type: {}".format(tile_type))
+                "Tried to init unknown tile type: {}".format(tile_type))
 
 
 def main(stdscr):
@@ -40,24 +42,36 @@ def main(stdscr):
     stdscr.addstr("SILO LEVEL EDITOR", curses.A_REVERSE)
     stdscr.chgat(-1, curses.A_REVERSE)
 
-    stdscr.addstr(curses.LINES - 1, 0,
-            "Use 'hjkl' to move, add, Quit.")
-    stdscr.chgat(curses.LINES - 1, 5, 4, curses.A_BOLD | curses.color_pair(2))
-    stdscr.chgat(curses.LINES - 1, 20, 1, curses.A_BOLD | curses.color_pair(2))
-    stdscr.chgat(curses.LINES - 1, 25, 1, curses.A_BOLD | curses.color_pair(1))
+    status_window = curses.newwin(1, STATUS_WINDOW_WIDTH, curses.LINES - 1, 0)
+    bindings_window = curses.newwin(
+        1,
+        curses.COLS -STATUS_WINDOW_WIDTH,
+        curses.LINES - 1,
+        STATUS_WINDOW_WIDTH)
+    bindings_window.addstr(0, 0, "Use 'hjkl' to move, insert, append, Quit.")
+    bindings_window.chgat(0, 5, 4, curses.A_BOLD | curses.color_pair(2))
+    bindings_window.chgat(0, 20, 1, curses.A_BOLD | curses.color_pair(2))
+    bindings_window.chgat(0, 28, 1, curses.A_BOLD | curses.color_pair(2))
+    bindings_window.chgat(0, 36, 1, curses.A_BOLD | curses.color_pair(1))
 
     container_window = curses.newwin(curses.LINES - 2, curses.COLS, 1, 0)
     main_window = container_window.subwin(
-            WINDOW_HEIGHT, WINDOW_WIDTH, WINDOW_Y, WINDOW_X)
+        WINDOW_HEIGHT, WINDOW_WIDTH, WINDOW_Y, WINDOW_X)
     main_window.addstr(cursor_y, cursor_x, CURSOR, curses.color_pair(3))
     container_window.box()
 
     stdscr.noutrefresh()
     container_window.noutrefresh()
+    bindings_window.noutrefresh()
+    status_window.noutrefresh()
 
     curses.doupdate()
 
     scene = collections.defaultdict(lambda: collections.defaultdict(list))
+    is_append_mode = False
+    tile_to_append = None
+    is_refresh_main = False
+    window_refresh_queue = []
 
     while True:
         ch = chr(stdscr.getch())
@@ -66,25 +80,44 @@ def main(stdscr):
             dy, dx = MOVEMENTS[ch]
             cursor_y += dy
             cursor_x += dx
-        elif ch == 'a':
+            if is_append_mode:
+                scene[cursor_y][cursor_x].append(tile_to_append)
+            heapq.heappush(window_refresh_queue, (2, main_window))
+            is_refresh_main = True
+        elif ch == 'i':
             scene[cursor_y][cursor_x].append(Tile('wall'))
+        elif ord(ch) == 27 or ch == 'a' and is_append_mode:  # Esc.
+            is_append_mode = False
+            status_window.clear()
+            heapq.heappush(window_refresh_queue, (4, status_window))
+        elif ch == 'a':
+            tile_to_append = Tile('wall')
+            scene[cursor_y][cursor_x].append(tile_to_append)
+            is_append_mode = True
+            status_window.clear()
+            status_window.addstr(0, 0, "-- APPEND ({}) --".format(
+                tile_to_append.char))
+            heapq.heappush(window_refresh_queue, (4, status_window))
         elif ch.lower() == 'q':
             break
 
-        main_window.clear()
-        for y in scene:
-            for x in scene[y]:
-                if len(scene[y][x]) > 1:
-                    main_window.addstr(
+        if is_refresh_main:
+            main_window.clear()
+            for y in scene:
+                for x in scene[y]:
+                    if len(scene[y][x]) > 1:
+                        main_window.addstr(
                             y, x, scene[y][x][-1].char, curses.color_pair(4))
-                else:
-                    main_window.addstr(y, x, scene[y][x][-1].char)
-        main_window.addstr(cursor_y, cursor_x, CURSOR, curses.color_pair(3))
+                    else:
+                        main_window.addstr(y, x, scene[y][x][-1].char)
+            main_window.addstr(cursor_y, cursor_x, CURSOR, curses.color_pair(3))
+            is_refresh_main = False
 
         # Refresh all windows bottom up to prevent flickering.
-        stdscr.noutrefresh()
-        container_window.noutrefresh()
-        main_window.noutrefresh()
+        while window_refresh_queue:
+            _, window = heapq.heappop(window_refresh_queue)
+            window.noutrefresh()
+        window_refresh_queue = []
         curses.doupdate()
 
 if __name__ == "__main__":
