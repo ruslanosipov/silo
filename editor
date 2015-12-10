@@ -3,32 +3,65 @@
 import collections
 import curses
 import heapq
+import sys
 
+COLOR_WHITE = 0
+COLOR_RED = 1
+COLOR_GREEN = 2
+COLOR_BLUE = 3
+COLOR_WHITE_ON_BLACK = 4
 CURSOR = "X"
-MOVEMENTS = {'h': (0, -1), 'j': (1, 0), 'k': (-1, 0), 'l': (0, 1)}
+KEYS = {
+    'Q': ('quit', ),
+    'X': ('remove_mode', ),
+    'a': ('append', ),
+    'h': ('move_cursor', 0, -1),
+    'i': ('insert', ),
+    'j': ('move_cursor', 1, 0),
+    'k': ('move_cursor', -1, 0),
+    'l': ('move_cursor', 0, 1),
+    'x': ('remove', ),
+    }
 STATUS_WINDOW_WIDTH = 17
-TILE_TYPES = {'wall': '#'}
+TILE_TYPES = {
+    'door': '+',
+    'floor': '.',
+    'wall': '#',
+    }
+
+WINDOW_MAIN_Y = 3
+WINDOW_MAIN_X = 2
+WINDOW_MAIN_OFFSET_Y = 6 
+WINDOW_MAIN_OFFSET_X = 4
+WINDOW_SELECT_HEIGHT = 6
+WINDOW_SELECT_WIDTH = 20
 
 
 class WindowManager(object):
 
-    def __init__(self, windows):
+    def __init__(self, stdscr, container_window, main_window, status_window):
         """Make sure parent windows are always left of child windows."""
-        self.windows = windows
-        self.redraw_queue = []
+        self.stdscr = stdscr
+        self.container_window = container_window
+        self.main_window = main_window
+        self.status_window = status_window
+        self.windows = [stdscr, container_window, main_window, status_window]
+
+        self.is_redraw_main = False
+        self._redraw_queue = []
 
     def queue_redraw(self, window):
-        heapq.heappush(self.redraw_queue, (self.windows.index(window), window))
+        heapq.heappush(self._redraw_queue, (self.windows.index(window), window))
 
     def redraw_all(self):
         for window in self.windows:
             window.noutrefresh()
 
     def redraw_queued(self):
-        while self.redraw_queue:
-            _, window = heapq.heappop(self.redraw_queue)
+        while self._redraw_queue:
+            _, window = heapq.heappop(self._redraw_queue)
             window.noutrefresh()
-        self.redraw_queue = []
+        self._redraw_queue = []
 
 
 class Tile(object):
@@ -41,137 +74,238 @@ class Tile(object):
                     "Tried to init unknown tile type: {}".format(tile_type))
 
 
-def main(stdscr):
-    curses.curs_set(0)
+def select_window_prompt(window_manager, items):
+    """Pops up a prompt which allows to select from a list of items.
 
-    WINDOW_HEIGHT = curses.LINES - 6
-    WINDOW_WIDTH = curses.COLS - 4
-    WINDOW_Y = 3
-    WINDOW_X = 2
+    Args:
+        window_manager -- WindowManager instance
+        items -- collections.OrderedDict, keys are to be returned,
+                 values are to be displayed.
 
-    cursor_y = (WINDOW_HEIGHT - WINDOW_Y) / 2
-    cursor_x = (WINDOW_WIDTH - WINDOW_X) / 2
+    Returns:
+        None if window was dismissed, or key from `items` parameter
+        for the selected item.
 
+    Allows user to move with `j` and `k` keys, Enter to select, Escape
+    or `Q`/`q` to quit.
+    """
+    current_line = 0
+    selected_item = None
+
+    select_window_container = window_manager.main_window.subwin(
+            WINDOW_SELECT_HEIGHT + 2,
+            WINDOW_SELECT_WIDTH + 2,
+            curses.LINES / 2 - WINDOW_SELECT_HEIGHT / 2 - 1,
+            curses.COLS / 2 - WINDOW_SELECT_WIDTH / 2 - 1)
+    select_window_container.box()
+    select_window = select_window_container.subwin(
+            WINDOW_SELECT_HEIGHT,
+            WINDOW_SELECT_WIDTH,
+            curses.LINES / 2 - WINDOW_SELECT_HEIGHT / 2,
+            curses.COLS / 2 - WINDOW_SELECT_WIDTH / 2)
+    window_manager.windows.append(select_window_container)
+    window_manager.windows.append(select_window)
+    window_manager.queue_redraw(select_window_container)
+
+    while selected_item is None:
+        select_window.clear()
+        for i, value in enumerate(items.values()):
+            color = COLOR_WHITE_ON_BLACK if i == current_line else COLOR_WHITE
+            select_window.addstr(i + 1, 1, value, curses.color_pair(color))
+        window_manager.queue_redraw(select_window)
+        window_manager.redraw_queued()
+        curses.doupdate()
+
+        ch = select_window.getch()
+        if chr(ch) == 'j':
+            current_line += 1
+        elif chr(ch) == 'k':
+            current_line -= 1
+        elif ch == 10:
+            selected_item = items.keys()[current_line]
+        elif chr(ch).lower() == 'q' or ch == 27:
+            break
+
+    window_manager.is_redraw_main = True
+    window_manager.windows.pop()
+    window_manager.windows.pop()
+
+    return selected_item
+
+
+
+class GlobalStateManager(object):
+
+
+    def __init__(self, window_manager, scene):
+        self.scene = scene
+        self.window_manager = window_manager
+        cursor_y, cursor_x = window_manager.main_window.getmaxyx()
+        self.cursor_y, self.cursor_x = cursor_y / 2, cursor_x / 2
+
+        self.current_tile = None
+        self.is_append_mode = False
+        self.is_remove_mode = False
+
+    def set_append_mode(self):
+        self.is_append_mode = True
+        self.is_remove_mode = False
+
+    def set_remove_mode(self):
+        self.is_append_mode = False
+        self.is_remove_mode = True
+
+    def reset_modes(self):
+        self.is_append_mode = False
+        self.is_remove_mode = False
+
+    def redraw_main_window(self):
+        main_window = self.window_manager.main_window
+        main_window.clear()
+        for y in self.scene:
+            for x in self.scene[y]:
+                color_pair = COLOR_WHITE_ON_BLACK if len(self.scene[y][x]) > 1 \
+                        else COLOR_WHITE
+                main_window.addstr(y, x, self.scene[y][x][-1].char,
+                                   curses.color_pair(color_pair))
+        color_pair = COLOR_RED if self.is_remove_mode else COLOR_BLUE
+        main_window.addstr(self.cursor_y, self.cursor_x, CURSOR,
+                           curses.color_pair(color_pair))
+        self.window_manager.queue_redraw(main_window)
+        self.window_manager.is_redraw_main = False
+
+
+    def exec_append(self):
+        enable_append_mode = not self.is_append_mode
+
+        if enable_append_mode:
+            self.scene[self.cursor_y][self.cursor_x].append(
+                    Tile(self.current_tile))
+            self.set_append_mode()
+        else:
+            self.reset_modes()
+
+        status_window = self.window_manager.status_window
+        status_window.clear()
+        if enable_append_mode:
+            status_window.addstr(0, 0, "-- APPEND --")
+        self.window_manager.queue_redraw(status_window)
+
+    def exec_insert(self):
+        tile_name = select_window_prompt(
+                self.window_manager,
+                collections.OrderedDict(sorted(zip(TILE_TYPES.keys(), [
+                        "{} {}".format(char, name)
+                        for name, char in TILE_TYPES.items()]))))
+
+        if tile_name is not None:
+            self.current_tile = tile_name
+            self.scene[self.cursor_y][self.cursor_x].append(
+                    Tile(self.current_tile))
+
+    def exec_move_cursor(self, dy, dx):
+        self.cursor_y += dy
+        self.cursor_x += dx
+        self.window_manager.is_redraw_main = True
+
+        if self.is_append_mode:
+            self.scene[self.cursor_y][self.cursor_x].append(Tile(
+                self.current_tile))
+
+        if self.is_remove_mode:
+            try:
+                self.scene[self.cursor_y][self.cursor_x].pop()
+            except IndexError:
+                pass
+            if not self.scene[self.cursor_y][self.cursor_x]:
+                del self.scene[self.cursor_y][self.cursor_x]
+
+    def exec_remove(self):
+        try:
+            self.scene[self.cursor_y][self.cursor_x].pop()
+        except IndexError:
+            pass
+        if not self.scene[self.cursor_y][self.cursor_x]:
+            del self.scene[self.cursor_y][self.cursor_x]
+
+    def exec_remove_mode(self):
+        enable_remove_mode = not self.is_remove_mode
+
+        if enable_remove_mode:
+            try:
+                self.scene[self.cursor_y][self.cursor_x].pop()
+            except IndexError:
+                pass
+            if not self.scene[self.cursor_y][self.cursor_x]:
+                del self.scene[self.cursor_y][self.cursor_x]
+            self.set_remove_mode()
+        else:
+            self.reset_modes()
+
+        status_window = self.window_manager.status_window
+        status_window.clear()
+        if enable_remove_mode:
+            status_window.addstr(0, 0, "-- REMOVE --")
+        self.window_manager.queue_redraw(status_window)
+        self.window_manager.is_redraw_main = True
+
+    def exec_quit(self):
+        sys.exit(0)
+
+
+def init_colors():
     if curses.has_colors():
         curses.start_color()
 
-    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_BLUE, curses.COLOR_BLACK)
-    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE)
+    curses.init_pair(COLOR_RED, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(COLOR_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(COLOR_BLUE, curses.COLOR_BLUE, curses.COLOR_BLACK)
+    curses.init_pair(COLOR_WHITE_ON_BLACK, curses.COLOR_BLACK,
+                     curses.COLOR_WHITE)
 
+
+def create_windows(stdscr):
     stdscr.addstr("SILO LEVEL EDITOR", curses.A_REVERSE)
     stdscr.chgat(-1, curses.A_REVERSE)
 
     status_window = curses.newwin(1, STATUS_WINDOW_WIDTH, curses.LINES - 1, 0)
-    bindings_window = curses.newwin(
-            1, curses.COLS -STATUS_WINDOW_WIDTH,
-            curses.LINES - 1, STATUS_WINDOW_WIDTH)
-    bindings_window.addstr(0, 0, (
-            "Use 'hjkl' to move, insert, append, "
-            "x to remove, X for remove mode, Quit."))
-    bindings_window.chgat(0, 5, 4, curses.A_BOLD | curses.color_pair(2))
-    bindings_window.chgat(0, 20, 1, curses.A_BOLD | curses.color_pair(2))
-    bindings_window.chgat(0, 28, 1, curses.A_BOLD | curses.color_pair(2))
-    bindings_window.chgat(0, 36, 1, curses.A_BOLD | curses.color_pair(2))
-    bindings_window.chgat(0, 49, 1, curses.A_BOLD | curses.color_pair(2))
-    bindings_window.chgat(0, 68, 1, curses.A_BOLD | curses.color_pair(1))
 
     container_window = curses.newwin(curses.LINES - 2, curses.COLS, 1, 0)
-    main_window = container_window.subwin(
-        WINDOW_HEIGHT, WINDOW_WIDTH, WINDOW_Y, WINDOW_X)
-    main_window.addstr(cursor_y, cursor_x, CURSOR, curses.color_pair(3))
     container_window.box()
+    main_window = container_window.subwin(
+            curses.LINES - WINDOW_MAIN_OFFSET_Y,
+            curses.COLS - WINDOW_MAIN_OFFSET_X,
+            WINDOW_MAIN_Y,
+            WINDOW_MAIN_X)
 
-    window_manager = WindowManager(
-        [stdscr, container_window, main_window, status_window, bindings_window])
+    return WindowManager(stdscr, container_window, main_window, status_window)
 
+
+def main(stdscr):
+    curses.curs_set(0)
+
+    init_colors()
+
+    window_manager = create_windows(stdscr)
+    scene = collections.defaultdict(lambda: collections.defaultdict(list))
+    global_state_manager = GlobalStateManager(window_manager, scene)
+
+    global_state_manager.redraw_main_window()
     window_manager.redraw_all()
     curses.doupdate()
 
-    scene = collections.defaultdict(lambda: collections.defaultdict(list))
-
-    is_append_mode = False
-    is_refresh_main = False
-    is_remove_mode = False
-    tile_to_append = None
 
     while True:
         ch = chr(stdscr.getch())
+        if ch not in KEYS:
+            continue
 
-        if ch in 'hjkl':
-            dy, dx = MOVEMENTS[ch]
-            cursor_y += dy
-            cursor_x += dx
-            if is_append_mode:
-                scene[cursor_y][cursor_x].append(tile_to_append)
-            if is_remove_mode:
-                try:
-                    scene[cursor_y][cursor_x].pop()
-                except IndexError:
-                    pass
-                if not scene[cursor_y][cursor_x]:
-                    del scene[cursor_y][cursor_x]
-            is_refresh_main = True
-        elif ch == 'i':
-            scene[cursor_y][cursor_x].append(Tile('wall'))
-        elif ord(ch) == 27 \
-                or ch == 'a' and is_append_mode \
-                or ch == 'X' and is_remove_mode:
-            is_append_mode = False
-            if is_remove_mode:
-                is_refresh_main = True
-                is_remove_mode = False
-            status_window.clear()
-            window_manager.queue_redraw(status_window)
-        elif ch == 'a':
-            tile_to_append = Tile('wall')
-            scene[cursor_y][cursor_x].append(tile_to_append)
-            is_append_mode = True
-            is_remove_mode = False
-            status_window.clear()
-            status_window.addstr(0, 0, "-- APPEND ({}) --".format(
-                    tile_to_append.char))
-            window_manager.queue_redraw(status_window)
-        elif ch == 'x':
-            try:
-                scene[cursor_y][cursor_x].pop()
-            except IndexError:
-                pass
-            if not scene[cursor_y][cursor_x]:
-                del scene[cursor_y][cursor_x]
-        elif ch == 'X':
-            is_remove_mode = True
-            is_append_mode = False
-            try:
-                scene[cursor_y][cursor_x].pop()
-            except IndexError:
-                pass
-            if not scene[cursor_y][cursor_x]:
-                del scene[cursor_y][cursor_x]
-            status_window.clear()
-            status_window.addstr(0, 0, "-- REMOVE --")
-            window_manager.queue_redraw(status_window)
+        args = KEYS[ch]
+        exec_method = getattr(global_state_manager, "exec_{}".format(args[0]))
+        exec_method(*args[1:]) if len(args) > 1 else exec_method()
 
-            is_refresh_main = True
-        elif ch.lower() == 'q':
-            break
-
-        if is_refresh_main:
-            main_window.clear()
-            for y in scene:
-                for x in scene[y]:
-                    if len(scene[y][x]) > 1:
-                        main_window.addstr(
-                                y, x,
-                                scene[y][x][-1].char, curses.color_pair(4))
-                    else:
-                        main_window.addstr(y, x, scene[y][x][-1].char)
-            color_pair = 1 if is_remove_mode else 3
-            main_window.addstr(
-                    cursor_y, cursor_x, CURSOR, curses.color_pair(color_pair))
-            window_manager.queue_redraw(main_window)
-            is_refresh_main = False
+        if window_manager.is_redraw_main:
+            global_state_manager.redraw_main_window()
 
         # Refresh all windows bottom up to prevent flickering.
         window_manager.redraw_queued()
