@@ -10,6 +10,27 @@ STATUS_WINDOW_WIDTH = 17
 TILE_TYPES = {'wall': '#'}
 
 
+class WindowManager(object):
+
+    def __init__(self, windows):
+        """Make sure parent windows are always left of child windows."""
+        self.windows = windows
+        self.redraw_queue = []
+
+    def queue_redraw(self, window):
+        heapq.heappush(self.redraw_queue, (self.windows.index(window), window))
+
+    def redraw_all(self):
+        for window in self.windows:
+            window.noutrefresh()
+
+    def redraw_queued(self):
+        while self.redraw_queue:
+            _, window = heapq.heappop(self.redraw_queue)
+            window.noutrefresh()
+        self.redraw_queue = []
+
+
 class Tile(object):
 
     def __init__(self, tile_type):
@@ -17,7 +38,7 @@ class Tile(object):
             self.char = TILE_TYPES[tile_type]
         except KeyError:
             raise ValueError(
-                "Tried to init unknown tile type: {}".format(tile_type))
+                    "Tried to init unknown tile type: {}".format(tile_type))
 
 
 def main(stdscr):
@@ -44,10 +65,8 @@ def main(stdscr):
 
     status_window = curses.newwin(1, STATUS_WINDOW_WIDTH, curses.LINES - 1, 0)
     bindings_window = curses.newwin(
-        1,
-        curses.COLS -STATUS_WINDOW_WIDTH,
-        curses.LINES - 1,
-        STATUS_WINDOW_WIDTH)
+            1, curses.COLS -STATUS_WINDOW_WIDTH,
+            curses.LINES - 1, STATUS_WINDOW_WIDTH)
     bindings_window.addstr(0, 0, (
             "Use 'hjkl' to move, insert, append, "
             "x to remove, X for remove mode, Quit."))
@@ -64,19 +83,18 @@ def main(stdscr):
     main_window.addstr(cursor_y, cursor_x, CURSOR, curses.color_pair(3))
     container_window.box()
 
-    stdscr.noutrefresh()
-    container_window.noutrefresh()
-    bindings_window.noutrefresh()
-    status_window.noutrefresh()
+    window_manager = WindowManager(
+        [stdscr, container_window, main_window, status_window, bindings_window])
 
+    window_manager.redraw_all()
     curses.doupdate()
 
     scene = collections.defaultdict(lambda: collections.defaultdict(list))
+
     is_append_mode = False
+    is_refresh_main = False
     is_remove_mode = False
     tile_to_append = None
-    is_refresh_main = False
-    window_refresh_queue = []
 
     while True:
         ch = chr(stdscr.getch())
@@ -94,7 +112,6 @@ def main(stdscr):
                     pass
                 if not scene[cursor_y][cursor_x]:
                     del scene[cursor_y][cursor_x]
-            heapq.heappush(window_refresh_queue, (2, main_window))
             is_refresh_main = True
         elif ch == 'i':
             scene[cursor_y][cursor_x].append(Tile('wall'))
@@ -103,11 +120,10 @@ def main(stdscr):
                 or ch == 'X' and is_remove_mode:
             is_append_mode = False
             if is_remove_mode:
-                heapq.heappush(window_refresh_queue, (2, main_window))
                 is_refresh_main = True
                 is_remove_mode = False
             status_window.clear()
-            heapq.heappush(window_refresh_queue, (4, status_window))
+            window_manager.queue_redraw(status_window)
         elif ch == 'a':
             tile_to_append = Tile('wall')
             scene[cursor_y][cursor_x].append(tile_to_append)
@@ -115,8 +131,8 @@ def main(stdscr):
             is_remove_mode = False
             status_window.clear()
             status_window.addstr(0, 0, "-- APPEND ({}) --".format(
-                tile_to_append.char))
-            heapq.heappush(window_refresh_queue, (4, status_window))
+                    tile_to_append.char))
+            window_manager.queue_redraw(status_window)
         elif ch == 'x':
             try:
                 scene[cursor_y][cursor_x].pop()
@@ -135,8 +151,8 @@ def main(stdscr):
                 del scene[cursor_y][cursor_x]
             status_window.clear()
             status_window.addstr(0, 0, "-- REMOVE --")
-            heapq.heappush(window_refresh_queue, (4, status_window))
-            heapq.heappush(window_refresh_queue, (2, main_window))
+            window_manager.queue_redraw(status_window)
+
             is_refresh_main = True
         elif ch.lower() == 'q':
             break
@@ -147,19 +163,18 @@ def main(stdscr):
                 for x in scene[y]:
                     if len(scene[y][x]) > 1:
                         main_window.addstr(
-                            y, x, scene[y][x][-1].char, curses.color_pair(4))
+                                y, x,
+                                scene[y][x][-1].char, curses.color_pair(4))
                     else:
                         main_window.addstr(y, x, scene[y][x][-1].char)
             color_pair = 1 if is_remove_mode else 3
             main_window.addstr(
-                cursor_y, cursor_x, CURSOR, curses.color_pair(color_pair))
+                    cursor_y, cursor_x, CURSOR, curses.color_pair(color_pair))
+            window_manager.queue_redraw(main_window)
             is_refresh_main = False
 
         # Refresh all windows bottom up to prevent flickering.
-        while window_refresh_queue:
-            _, window = heapq.heappop(window_refresh_queue)
-            window.noutrefresh()
-        window_refresh_queue = []
+        window_manager.redraw_queued()
         curses.doupdate()
 
 if __name__ == "__main__":
