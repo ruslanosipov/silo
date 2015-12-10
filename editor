@@ -5,12 +5,23 @@ import curses
 import heapq
 import sys
 
+APPLICATION_TITLE = "SILO LEVEL EDITOR"
+CURSOR = "X"
+
 COLOR_WHITE = 0
 COLOR_RED = 1
 COLOR_GREEN = 2
 COLOR_BLUE = 3
 COLOR_WHITE_ON_BLACK = 4
-CURSOR = "X"
+
+WINDOW_MAIN_OFFSET_X = 4
+WINDOW_MAIN_OFFSET_Y = 6
+WINDOW_MAIN_X = 2
+WINDOW_MAIN_Y = 3
+WINDOW_SELECT_HEIGHT = 6
+WINDOW_SELECT_WIDTH = 20
+WINDOW_STATUS_WIDTH = 17
+
 KEYS = {
     'Q': ('quit', ),
     'X': ('remove_mode', ),
@@ -22,63 +33,57 @@ KEYS = {
     'l': ('move_cursor', 0, 1),
     'x': ('remove', ),
     }
-STATUS_WINDOW_WIDTH = 17
+
 TILE_TYPES = {
     'door': '+',
     'floor': '.',
     'wall': '#',
     }
 
-WINDOW_MAIN_Y = 3
-WINDOW_MAIN_X = 2
-WINDOW_MAIN_OFFSET_Y = 6 
-WINDOW_MAIN_OFFSET_X = 4
-WINDOW_SELECT_HEIGHT = 6
-WINDOW_SELECT_WIDTH = 20
-
 
 class WindowManager(object):
+    """Manages refreshing windows, bottom to top."""
 
     def __init__(self, stdscr, container_window, main_window, status_window):
-        """Make sure parent windows are always left of child windows."""
         self.stdscr = stdscr
         self.container_window = container_window
         self.main_window = main_window
         self.status_window = status_window
         self.windows = [stdscr, container_window, main_window, status_window]
 
-        self.is_redraw_main = False
+        self.is_recompose_main = False
         self._redraw_queue = []
 
     def queue_redraw(self, window):
+        """Add a window to redraw queue."""
         heapq.heappush(self._redraw_queue, (self.windows.index(window), window))
 
     def redraw_all(self):
+        """Redraw all windows, bottom to top."""
         for window in self.windows:
             window.noutrefresh()
+        curses.doupdate()
 
     def redraw_queued(self):
+        """Redraw previously queued windows, bottom to top."""
         while self._redraw_queue:
             _, window = heapq.heappop(self._redraw_queue)
             window.noutrefresh()
         self._redraw_queue = []
+        curses.doupdate()
 
 
 class Tile(object):
 
     def __init__(self, tile_type):
-        try:
-            self.char = TILE_TYPES[tile_type]
-        except KeyError:
-            raise ValueError(
-                    "Tried to init unknown tile type: {}".format(tile_type))
+        self.char = TILE_TYPES[tile_type]
 
 
 def select_window_prompt(window_manager, items):
     """Pops up a prompt which allows to select from a list of items.
 
     Args:
-        window_manager -- WindowManager instance
+        window_manager -- WindowManager instance.
         items -- collections.OrderedDict, keys are to be returned,
                  values are to be displayed.
 
@@ -114,7 +119,6 @@ def select_window_prompt(window_manager, items):
             select_window.addstr(i + 1, 1, value, curses.color_pair(color))
         window_manager.queue_redraw(select_window)
         window_manager.redraw_queued()
-        curses.doupdate()
 
         ch = select_window.getch()
         if chr(ch) == 'j':
@@ -126,16 +130,22 @@ def select_window_prompt(window_manager, items):
         elif chr(ch).lower() == 'q' or ch == 27:
             break
 
-    window_manager.is_redraw_main = True
+    window_manager.is_recompose_main = True
     window_manager.windows.pop()
     window_manager.windows.pop()
 
     return selected_item
 
 
-
 class GlobalStateManager(object):
+    """Manages variables and methods which must be global.
 
+    See all the state variables in `__init__`. Important part here is
+    all the `exec_*` methods, which are called dynamically from
+    `main` using `KEYS` dict. Each `exec_*` method corresponds to a
+    keystroke and performs some operations on the global state
+    variables inside the class.
+    """
 
     def __init__(self, window_manager, scene):
         self.scene = scene
@@ -147,21 +157,23 @@ class GlobalStateManager(object):
         self.is_append_mode = False
         self.is_remove_mode = False
 
-    def set_append_mode(self):
+    def _set_append_mode(self):
         self.is_append_mode = True
         self.is_remove_mode = False
 
-    def set_remove_mode(self):
+    def _set_remove_mode(self):
         self.is_append_mode = False
         self.is_remove_mode = True
 
-    def reset_modes(self):
+    def _reset_modes(self):
         self.is_append_mode = False
         self.is_remove_mode = False
 
-    def redraw_main_window(self):
+    def recompose_main_window(self):
+        """Draw objects in the scene and queue the main window redraw."""
         main_window = self.window_manager.main_window
         main_window.clear()
+
         for y in self.scene:
             for x in self.scene[y]:
                 color_pair = COLOR_WHITE_ON_BLACK if len(self.scene[y][x]) > 1 \
@@ -172,18 +184,19 @@ class GlobalStateManager(object):
         main_window.addstr(self.cursor_y, self.cursor_x, CURSOR,
                            curses.color_pair(color_pair))
         self.window_manager.queue_redraw(main_window)
-        self.window_manager.is_redraw_main = False
+        self.window_manager.is_recompose_main = False
 
 
     def exec_append(self):
+        """Enter a mode to continuously add objects under cursor."""
         enable_append_mode = not self.is_append_mode
 
         if enable_append_mode:
             self.scene[self.cursor_y][self.cursor_x].append(
                     Tile(self.current_tile))
-            self.set_append_mode()
+            self._set_append_mode()
         else:
-            self.reset_modes()
+            self._reset_modes()
 
         status_window = self.window_manager.status_window
         status_window.clear()
@@ -192,11 +205,15 @@ class GlobalStateManager(object):
         self.window_manager.queue_redraw(status_window)
 
     def exec_insert(self):
-        tile_name = select_window_prompt(
-                self.window_manager,
-                collections.OrderedDict(sorted(zip(TILE_TYPES.keys(), [
-                        "{} {}".format(char, name)
-                        for name, char in TILE_TYPES.items()]))))
+        """Insert an object under cursor, prompt for tile if needed."""
+        if self.current_tile is None:
+            tile_name = select_window_prompt(
+                    self.window_manager,
+                    collections.OrderedDict(sorted(zip(TILE_TYPES.keys(), [
+                            "{} {}".format(char, name)
+                            for name, char in TILE_TYPES.items()]))))
+        else:
+            tile_name = self.current_tile
 
         if tile_name is not None:
             self.current_tile = tile_name
@@ -204,9 +221,10 @@ class GlobalStateManager(object):
                     Tile(self.current_tile))
 
     def exec_move_cursor(self, dy, dx):
+        """Move cursor; add or remove objects based on current mode."""
         self.cursor_y += dy
         self.cursor_x += dx
-        self.window_manager.is_redraw_main = True
+        self.window_manager.is_recompose_main = True
 
         if self.is_append_mode:
             self.scene[self.cursor_y][self.cursor_x].append(Tile(
@@ -221,6 +239,7 @@ class GlobalStateManager(object):
                 del self.scene[self.cursor_y][self.cursor_x]
 
     def exec_remove(self):
+        """Remove an object under cursor."""
         try:
             self.scene[self.cursor_y][self.cursor_x].pop()
         except IndexError:
@@ -229,6 +248,7 @@ class GlobalStateManager(object):
             del self.scene[self.cursor_y][self.cursor_x]
 
     def exec_remove_mode(self):
+        """Enter a remove mode; remove topmost objects while moving."""
         enable_remove_mode = not self.is_remove_mode
 
         if enable_remove_mode:
@@ -238,22 +258,24 @@ class GlobalStateManager(object):
                 pass
             if not self.scene[self.cursor_y][self.cursor_x]:
                 del self.scene[self.cursor_y][self.cursor_x]
-            self.set_remove_mode()
+            self._set_remove_mode()
         else:
-            self.reset_modes()
+            self._reset_modes()
 
         status_window = self.window_manager.status_window
         status_window.clear()
         if enable_remove_mode:
             status_window.addstr(0, 0, "-- REMOVE --")
         self.window_manager.queue_redraw(status_window)
-        self.window_manager.is_redraw_main = True
+        self.window_manager.is_recompose_main = True
 
     def exec_quit(self):
+        """Exit the application."""
         sys.exit(0)
 
 
 def init_colors():
+    """Initialize curses color pairs, see constants up top."""
     if curses.has_colors():
         curses.start_color()
 
@@ -265,10 +287,18 @@ def init_colors():
 
 
 def create_windows(stdscr):
-    stdscr.addstr("SILO LEVEL EDITOR", curses.A_REVERSE)
+    """Create all necessary windows to start the application.
+
+    Args:
+        stdscr -- curses.stdscr.
+
+    Returns:
+        WindowManager instance.
+    """
+    stdscr.addstr(APPLICATION_TITLE, curses.A_REVERSE)
     stdscr.chgat(-1, curses.A_REVERSE)
 
-    status_window = curses.newwin(1, STATUS_WINDOW_WIDTH, curses.LINES - 1, 0)
+    status_window = curses.newwin(1, WINDOW_STATUS_WIDTH, curses.LINES - 1, 0)
 
     container_window = curses.newwin(curses.LINES - 2, curses.COLS, 1, 0)
     container_window.box()
@@ -290,26 +320,22 @@ def main(stdscr):
     scene = collections.defaultdict(lambda: collections.defaultdict(list))
     global_state_manager = GlobalStateManager(window_manager, scene)
 
-    global_state_manager.redraw_main_window()
+    global_state_manager.recompose_main_window()
     window_manager.redraw_all()
-    curses.doupdate()
-
 
     while True:
         ch = chr(stdscr.getch())
         if ch not in KEYS:
             continue
 
+        # See docstring of GlobalStateManager for more info on this.
         args = KEYS[ch]
         exec_method = getattr(global_state_manager, "exec_{}".format(args[0]))
         exec_method(*args[1:]) if len(args) > 1 else exec_method()
 
-        if window_manager.is_redraw_main:
-            global_state_manager.redraw_main_window()
-
-        # Refresh all windows bottom up to prevent flickering.
+        if window_manager.is_recompose_main:
+            global_state_manager.recompose_main_window()
         window_manager.redraw_queued()
-        curses.doupdate()
 
 if __name__ == "__main__":
     curses.wrapper(main)
