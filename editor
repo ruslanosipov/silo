@@ -23,11 +23,13 @@ WINDOW_SELECT_WIDTH = 20
 WINDOW_STATUS_WIDTH = 17
 
 KEYS = {
+    'A': ('append', True),
+    'I': ('insert', True),
     'Q': ('quit', ),
     'X': ('remove_mode', ),
-    'a': ('append', ),
+    'a': ('append', False),
     'h': ('move_cursor', 0, -1),
-    'i': ('insert', ),
+    'i': ('insert', False),
     'j': ('move_cursor', 1, 0),
     'k': ('move_cursor', -1, 0),
     'l': ('move_cursor', 0, 1),
@@ -39,6 +41,9 @@ TILE_TYPES = {
     'floor': '.',
     'wall': '#',
     }
+
+TILE_TYPE_SELECT = collections.OrderedDict(sorted(zip(TILE_TYPES.keys(),
+        ["{} {}".format(char, name) for name, char in TILE_TYPES.items()])))
 
 
 class WindowManager(object):
@@ -187,14 +192,29 @@ class GlobalStateManager(object):
         self.window_manager.is_recompose_main = False
 
 
-    def exec_append(self):
-        """Enter a mode to continuously add objects under cursor."""
+    def exec_append(self, force_select):
+        """Enter a mode to continuously add objects under cursor.
+
+        Args:
+            force_select -- Show tile select window even if
+            `self.current_tile` is set.
+        """
         enable_append_mode = not self.is_append_mode
 
         if enable_append_mode:
+            if self.current_tile is None or force_select:
+                tile_name = select_window_prompt(
+                        self.window_manager, TILE_TYPE_SELECT)
+                if tile_name is None:
+                    return
+                self.current_tile = tile_name
+            else:
+                tile_name = self.current_tile
+
             self.scene[self.cursor_y][self.cursor_x].append(
                     Tile(self.current_tile))
             self._set_append_mode()
+
         else:
             self._reset_modes()
 
@@ -204,14 +224,16 @@ class GlobalStateManager(object):
             status_window.addstr(0, 0, "-- APPEND --")
         self.window_manager.queue_redraw(status_window)
 
-    def exec_insert(self):
-        """Insert an object under cursor, prompt for tile if needed."""
-        if self.current_tile is None:
+    def exec_insert(self, force_select):
+        """Insert an object under cursor, prompt for tile if needed.
+
+        Args:
+            force_select -- Show tile select window even if
+            `self.current_tile` is set.
+        """
+        if self.current_tile is None or force_select:
             tile_name = select_window_prompt(
-                    self.window_manager,
-                    collections.OrderedDict(sorted(zip(TILE_TYPES.keys(), [
-                            "{} {}".format(char, name)
-                            for name, char in TILE_TYPES.items()]))))
+                    self.window_manager, TILE_TYPE_SELECT)
         else:
             tile_name = self.current_tile
 
@@ -328,7 +350,7 @@ def main(stdscr):
         if ch not in KEYS:
             continue
 
-        # See docstring of GlobalStateManager for more info on this.
+        # See GlobalStateManager's docstring for more info on this.
         args = KEYS[ch]
         exec_method = getattr(global_state_manager, "exec_{}".format(args[0]))
         exec_method(*args[1:]) if len(args) > 1 else exec_method()
