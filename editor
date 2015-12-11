@@ -95,7 +95,7 @@ class Tile(object):
         self.char = TILE_TYPES[tile_type]
 
 
-def select_window_prompt(window_manager, items):
+def item_selection_prompt(window_manager, items):
     """Pops up a prompt which allows to select from a list of items.
 
     Args:
@@ -249,7 +249,7 @@ class GlobalStateManager(object):
 
         if enable_append_mode:
             if self.current_tile is None or force_select:
-                tile_name = select_window_prompt(
+                tile_name = item_selection_prompt(
                         self.window_manager, TILE_TYPE_SELECT)
                 if tile_name is None:
                     return
@@ -280,7 +280,7 @@ class GlobalStateManager(object):
             `self.current_tile` is set.
         """
         if self.current_tile is None or force_select:
-            tile_name = select_window_prompt(
+            tile_name = item_selection_prompt(
                     self.window_manager, TILE_TYPE_SELECT)
         else:
             tile_name = self.current_tile
