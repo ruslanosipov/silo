@@ -226,9 +226,14 @@ class GlobalStateManager(object):
                         if len(self.scene[y][x]) > 1 else COLOR_WHITE
                 main_window.addstr(y, x, self.scene[y][x][-1].char,
                                    curses.color_pair(color))
-        color = COLOR_RED if self.is_remove_mode else COLOR_BLUE
+        if self.is_remove_mode:
+            cursor_color = COLOR_RED
+        elif self.is_append_mode:
+            cursor_color = COLOR_GREEN
+        else:
+            cursor_color = COLOR_BLUE
         main_window.addstr(self.cursor_y, self.cursor_x, CURSOR,
-                           curses.color_pair(color))
+                           curses.color_pair(cursor_color))
         self.window_manager.queue_redraw(main_window)
         self.window_manager.is_recompose_main = False
 
@@ -263,7 +268,9 @@ class GlobalStateManager(object):
         status_window.clear()
         if enable_append_mode:
             status_window.addstr(0, 0, "-- APPEND --")
+
         self.window_manager.queue_redraw(status_window)
+        self.window_manager.is_recompose_main = True
 
     def exec_insert(self, force_select):
         """Insert an object under cursor, prompt for tile if needed.
