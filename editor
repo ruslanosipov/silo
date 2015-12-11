@@ -12,7 +12,7 @@ COLOR_WHITE = 0
 COLOR_RED = 1
 COLOR_GREEN = 2
 COLOR_BLUE = 3
-COLOR_WHITE_ON_BLACK = 4
+COLOR_BLACK_ON_WHITE = 4
 
 WINDOW_MAIN_OFFSET_X = 4
 WINDOW_MAIN_OFFSET_Y = 6
@@ -40,6 +40,17 @@ TILE_TYPES = {
     'door': '+',
     'floor': '.',
     'wall': '#',
+
+    'one': '1',
+    'two': '2',
+    'three': '3',
+    'four': '4',
+    'five': '5',
+    'six': '6',
+    'seven': '7',
+    'eight': '8',
+    'nine': '9',
+    'zero': '0',
     }
 
 TILE_TYPE_SELECT = collections.OrderedDict(sorted(zip(TILE_TYPES.keys(),
@@ -100,6 +111,7 @@ def select_window_prompt(window_manager, items):
     or `Q`/`q` to quit.
     """
     current_line = 0
+    dy = 0
     selected_item = None
 
     select_window_container = window_manager.main_window.subwin(
@@ -119,17 +131,46 @@ def select_window_prompt(window_manager, items):
 
     while selected_item is None:
         select_window.clear()
-        for i, value in enumerate(items.values()):
-            color = COLOR_WHITE_ON_BLACK if i == current_line else COLOR_WHITE
-            select_window.addstr(i + 1, 1, value, curses.color_pair(color))
+
+        sublist = items.values()
+        if len(items) > WINDOW_SELECT_HEIGHT:
+            sublist = sublist[dy:WINDOW_SELECT_HEIGHT + dy]
+            if dy == 0:
+                sublist.pop()
+                sublist.append('...')
+            elif dy + WINDOW_SELECT_HEIGHT == len(items):
+                sublist.pop(0)
+                sublist.insert(0, '...')
+            else:
+                sublist.pop(0)
+                sublist.pop()
+                sublist.insert(0, '...')
+                sublist.append('...')
+
+        for i, value in enumerate(sublist):
+            color = COLOR_BLACK_ON_WHITE \
+                    if i == current_line - dy else COLOR_WHITE
+            select_window.addstr(i, 0, value, curses.color_pair(color))
+
         window_manager.queue_redraw(select_window)
         window_manager.redraw_queued()
 
         ch = select_window.getch()
         if chr(ch) == 'j':
+            if current_line == len(items) - 1:
+                continue
+
             current_line += 1
+            if dy + WINDOW_SELECT_HEIGHT <= current_line + 1 \
+                    and dy + WINDOW_SELECT_HEIGHT != len(items):
+                dy += 1
         elif chr(ch) == 'k':
+            if current_line == 0:
+                continue
+
             current_line -= 1
+            if dy >= current_line and dy != 0:
+                dy -= 1
         elif ch == 10:
             selected_item = items.keys()[current_line]
         elif chr(ch).lower() == 'q' or ch == 27:
@@ -181,13 +222,13 @@ class GlobalStateManager(object):
 
         for y in self.scene:
             for x in self.scene[y]:
-                color_pair = COLOR_WHITE_ON_BLACK if len(self.scene[y][x]) > 1 \
-                        else COLOR_WHITE
+                color = COLOR_BLACK_ON_WHITE \
+                        if len(self.scene[y][x]) > 1 else COLOR_WHITE
                 main_window.addstr(y, x, self.scene[y][x][-1].char,
-                                   curses.color_pair(color_pair))
-        color_pair = COLOR_RED if self.is_remove_mode else COLOR_BLUE
+                                   curses.color_pair(color))
+        color = COLOR_RED if self.is_remove_mode else COLOR_BLUE
         main_window.addstr(self.cursor_y, self.cursor_x, CURSOR,
-                           curses.color_pair(color_pair))
+                           curses.color_pair(color))
         self.window_manager.queue_redraw(main_window)
         self.window_manager.is_recompose_main = False
 
@@ -304,7 +345,7 @@ def init_colors():
     curses.init_pair(COLOR_RED, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(COLOR_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
     curses.init_pair(COLOR_BLUE, curses.COLOR_BLUE, curses.COLOR_BLACK)
-    curses.init_pair(COLOR_WHITE_ON_BLACK, curses.COLOR_BLACK,
+    curses.init_pair(COLOR_BLACK_ON_WHITE, curses.COLOR_BLACK,
                      curses.COLOR_WHITE)
 
 
