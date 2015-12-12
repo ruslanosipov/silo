@@ -1,9 +1,20 @@
 #!/usr/bin/env python
+"""Silo level editor.
+
+Usage: editor <level>
+
+Options:
+    -h --help   Show this screen.
+    --version   Show version.
+"""
 
 import collections
 import curses
 import heapq
 import sys
+
+import dill
+import docopt
 
 APPLICATION_TITLE = "SILO LEVEL EDITOR"
 CURSOR = "X"
@@ -26,6 +37,7 @@ KEYS = {
     'A': ('append', True),
     'I': ('insert', True),
     'Q': ('quit', ),
+    'S': ('save', ),
     'X': ('remove_mode', ),
     'a': ('append', False),
     'h': ('move_cursor', 0, -1),
@@ -193,7 +205,8 @@ class GlobalStateManager(object):
     variables inside the class.
     """
 
-    def __init__(self, window_manager, scene):
+    def __init__(self, window_manager, scene, save_file):
+        self.save_file = save_file
         self.scene = scene
         self.window_manager = window_manager
         cursor_y, cursor_x = window_manager.main_window.getmaxyx()
@@ -343,6 +356,11 @@ class GlobalStateManager(object):
         """Exit the application."""
         sys.exit(0)
 
+    def exec_save(self):
+        """Save current level."""
+        with open(self.save_file, 'w') as save_file:
+            dill.dump(self.scene, save_file)
+
 
 def init_colors():
     """Initialize curses color pairs, see constants up top."""
@@ -356,16 +374,18 @@ def init_colors():
                      curses.COLOR_WHITE)
 
 
-def create_windows(stdscr):
+def create_windows(stdscr, save_file):
     """Create all necessary windows to start the application.
 
     Args:
         stdscr -- curses.stdscr.
+        save_file -- file name for the current edited file
 
     Returns:
         WindowManager instance.
     """
-    stdscr.addstr(APPLICATION_TITLE, curses.A_REVERSE)
+    stdscr.addstr(
+            "{}: {}".format(APPLICATION_TITLE, save_file), curses.A_REVERSE)
     stdscr.chgat(-1, curses.A_REVERSE)
 
     status_window = curses.newwin(1, WINDOW_STATUS_WIDTH, curses.LINES - 1, 0)
@@ -381,14 +401,18 @@ def create_windows(stdscr):
     return WindowManager(stdscr, container_window, main_window, status_window)
 
 
-def main(stdscr):
+def main(stdscr, save_file):
     curses.curs_set(0)
 
     init_colors()
 
-    window_manager = create_windows(stdscr)
-    scene = collections.defaultdict(lambda: collections.defaultdict(list))
-    global_state_manager = GlobalStateManager(window_manager, scene)
+    window_manager = create_windows(stdscr, save_file)
+    try:
+        with open(save_file, 'r') as level_definition_file:
+            scene = dill.load(level_definition_file)
+    except IOError:
+        scene = collections.defaultdict(lambda: collections.defaultdict(list))
+    global_state_manager = GlobalStateManager(window_manager, scene, save_file)
 
     global_state_manager.recompose_main_window()
     window_manager.redraw_all()
@@ -408,4 +432,5 @@ def main(stdscr):
         window_manager.redraw_queued()
 
 if __name__ == "__main__":
-    curses.wrapper(main)
+    arguments = docopt.docopt(__doc__, version="Silo Level Editor v0.1")
+    curses.wrapper(main, arguments['<level>'])
