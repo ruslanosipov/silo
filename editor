@@ -10,28 +10,16 @@ Options:
 
 import collections
 import curses
-import heapq
-import sys
 
 import dill
 import docopt
 
+import gsm
+import ui
+import windowmanager
+
 APPLICATION_TITLE = "SILO LEVEL EDITOR"
 CURSOR = "X"
-
-COLOR_WHITE = 0
-COLOR_RED = 1
-COLOR_GREEN = 2
-COLOR_BLUE = 3
-COLOR_BLACK_ON_WHITE = 4
-
-WINDOW_MAIN_OFFSET_X = 4
-WINDOW_MAIN_OFFSET_Y = 6
-WINDOW_MAIN_X = 2
-WINDOW_MAIN_Y = 3
-WINDOW_SELECT_HEIGHT = 6
-WINDOW_SELECT_WIDTH = 20
-WINDOW_STATUS_WIDTH = 17
 
 KEYS = {
     'A': ('append', True),
@@ -69,38 +57,6 @@ TILE_TYPE_SELECT = collections.OrderedDict(sorted(zip(TILE_TYPES.keys(),
         ["{} {}".format(char, name) for name, char in TILE_TYPES.items()])))
 
 
-class WindowManager(object):
-    """Manages refreshing windows, bottom to top."""
-
-    def __init__(self, stdscr, container_window, main_window, status_window):
-        self.stdscr = stdscr
-        self.container_window = container_window
-        self.main_window = main_window
-        self.status_window = status_window
-        self.windows = [stdscr, container_window, main_window, status_window]
-
-        self.is_recompose_main = False
-        self._redraw_queue = []
-
-    def queue_redraw(self, window):
-        """Add a window to redraw queue."""
-        heapq.heappush(self._redraw_queue, (self.windows.index(window), window))
-
-    def redraw_all(self):
-        """Redraw all windows, bottom to top."""
-        for window in self.windows:
-            window.noutrefresh()
-        curses.doupdate()
-
-    def redraw_queued(self):
-        """Redraw previously queued windows, bottom to top."""
-        while self._redraw_queue:
-            _, window = heapq.heappop(self._redraw_queue)
-            window.noutrefresh()
-        self._redraw_queue = []
-        curses.doupdate()
-
-
 class Tile(object):
 
     def __init__(self, tile_type):
@@ -111,7 +67,7 @@ def item_selection_prompt(window_manager, items):
     """Pops up a prompt which allows to select from a list of items.
 
     Args:
-        window_manager -- WindowManager instance.
+        window_manager -- windowmanager.WindowManager instance.
         items -- collections.OrderedDict, keys are to be returned,
                  values are to be displayed.
 
@@ -127,16 +83,16 @@ def item_selection_prompt(window_manager, items):
     selected_item = None
 
     select_window_container = window_manager.main_window.subwin(
-            WINDOW_SELECT_HEIGHT + 2,
-            WINDOW_SELECT_WIDTH + 2,
-            curses.LINES / 2 - WINDOW_SELECT_HEIGHT / 2 - 1,
-            curses.COLS / 2 - WINDOW_SELECT_WIDTH / 2 - 1)
+            windowmanager.WINDOW_SELECT_HEIGHT + 2,
+            windowmanager.WINDOW_SELECT_WIDTH + 2,
+            curses.LINES / 2 - windowmanager.WINDOW_SELECT_HEIGHT / 2 - 1,
+            curses.COLS / 2 - windowmanager.WINDOW_SELECT_WIDTH / 2 - 1)
     select_window_container.box()
     select_window = select_window_container.subwin(
-            WINDOW_SELECT_HEIGHT,
-            WINDOW_SELECT_WIDTH,
-            curses.LINES / 2 - WINDOW_SELECT_HEIGHT / 2,
-            curses.COLS / 2 - WINDOW_SELECT_WIDTH / 2)
+            windowmanager.WINDOW_SELECT_HEIGHT,
+            windowmanager.WINDOW_SELECT_WIDTH,
+            curses.LINES / 2 - windowmanager.WINDOW_SELECT_HEIGHT / 2,
+            curses.COLS / 2 - windowmanager.WINDOW_SELECT_WIDTH / 2)
     window_manager.windows.append(select_window_container)
     window_manager.windows.append(select_window)
     window_manager.queue_redraw(select_window_container)
@@ -145,12 +101,12 @@ def item_selection_prompt(window_manager, items):
         select_window.clear()
 
         sublist = items.values()
-        if len(items) > WINDOW_SELECT_HEIGHT:
-            sublist = sublist[dy:WINDOW_SELECT_HEIGHT + dy]
+        if len(items) > windowmanager.WINDOW_SELECT_HEIGHT:
+            sublist = sublist[dy:windowmanager.WINDOW_SELECT_HEIGHT + dy]
             if dy == 0:
                 sublist.pop()
                 sublist.append('...')
-            elif dy + WINDOW_SELECT_HEIGHT == len(items):
+            elif dy + windowmanager.WINDOW_SELECT_HEIGHT == len(items):
                 sublist.pop(0)
                 sublist.insert(0, '...')
             else:
@@ -160,8 +116,8 @@ def item_selection_prompt(window_manager, items):
                 sublist.append('...')
 
         for i, value in enumerate(sublist):
-            color = COLOR_BLACK_ON_WHITE \
-                    if i == current_line - dy else COLOR_WHITE
+            color = ui.COLOR_BLACK_ON_WHITE \
+                    if i == current_line - dy else ui.COLOR_WHITE
             select_window.addstr(i, 0, value, curses.color_pair(color))
 
         window_manager.queue_redraw(select_window)
@@ -173,8 +129,8 @@ def item_selection_prompt(window_manager, items):
                 continue
 
             current_line += 1
-            if dy + WINDOW_SELECT_HEIGHT <= current_line + 1 \
-                    and dy + WINDOW_SELECT_HEIGHT != len(items):
+            if dy + windowmanager.WINDOW_SELECT_HEIGHT <= current_line + 1 \
+                    and dy + windowmanager.WINDOW_SELECT_HEIGHT != len(items):
                 dy += 1
         elif chr(ch) == 'k':
             if current_line == 0:
@@ -195,7 +151,7 @@ def item_selection_prompt(window_manager, items):
     return selected_item
 
 
-class GlobalStateManager(object):
+class EditorGlobalStateManager(gsm.GlobalStateManager):
     """Manages variables and methods which must be global.
 
     See all the state variables in `__init__`. Important part here is
@@ -206,15 +162,14 @@ class GlobalStateManager(object):
     """
 
     def __init__(self, window_manager, scene, save_file):
-        self.save_file = save_file
-        self.scene = scene
-        self.window_manager = window_manager
-        cursor_y, cursor_x = window_manager.main_window.getmaxyx()
-        self.cursor_y, self.cursor_x = cursor_y / 2, cursor_x / 2
+        super(EditorGlobalStateManager, self).__init__(window_manager, scene)
 
-        self.current_tile = None
+        self.save_file = save_file
+
         self.is_append_mode = False
         self.is_remove_mode = False
+
+        self.current_tile = None
 
     def _set_append_mode(self):
         self.is_append_mode = True
@@ -235,16 +190,16 @@ class GlobalStateManager(object):
 
         for y in self.scene:
             for x in self.scene[y]:
-                color = COLOR_BLACK_ON_WHITE \
-                        if len(self.scene[y][x]) > 1 else COLOR_WHITE
+                color = ui.COLOR_BLACK_ON_WHITE \
+                        if len(self.scene[y][x]) > 1 else ui.COLOR_WHITE
                 main_window.addstr(y, x, self.scene[y][x][-1].char,
                                    curses.color_pair(color))
         if self.is_remove_mode:
-            cursor_color = COLOR_RED
+            cursor_color = ui.COLOR_RED
         elif self.is_append_mode:
-            cursor_color = COLOR_GREEN
+            cursor_color = ui.COLOR_GREEN
         else:
-            cursor_color = COLOR_BLUE
+            cursor_color = ui.COLOR_BLUE
         main_window.addstr(self.cursor_y, self.cursor_x, CURSOR,
                            curses.color_pair(cursor_color))
         self.window_manager.queue_redraw(main_window)
@@ -352,67 +307,28 @@ class GlobalStateManager(object):
         self.window_manager.queue_redraw(status_window)
         self.window_manager.is_recompose_main = True
 
-    def exec_quit(self):
-        """Exit the application."""
-        sys.exit(0)
-
     def exec_save(self):
         """Save current level."""
         with open(self.save_file, 'w') as save_file:
             dill.dump(self.scene, save_file)
 
 
-def init_colors():
-    """Initialize curses color pairs, see constants up top."""
-    if curses.has_colors():
-        curses.start_color()
-
-    curses.init_pair(COLOR_RED, curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(COLOR_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(COLOR_BLUE, curses.COLOR_BLUE, curses.COLOR_BLACK)
-    curses.init_pair(COLOR_BLACK_ON_WHITE, curses.COLOR_BLACK,
-                     curses.COLOR_WHITE)
-
-
-def create_windows(stdscr, save_file):
-    """Create all necessary windows to start the application.
-
-    Args:
-        stdscr -- curses.stdscr.
-        save_file -- file name for the current edited file
-
-    Returns:
-        WindowManager instance.
-    """
-    stdscr.addstr(
-            "{}: {}".format(APPLICATION_TITLE, save_file), curses.A_REVERSE)
-    stdscr.chgat(-1, curses.A_REVERSE)
-
-    status_window = curses.newwin(1, WINDOW_STATUS_WIDTH, curses.LINES - 1, 0)
-
-    container_window = curses.newwin(curses.LINES - 2, curses.COLS, 1, 0)
-    container_window.box()
-    main_window = container_window.subwin(
-            curses.LINES - WINDOW_MAIN_OFFSET_Y,
-            curses.COLS - WINDOW_MAIN_OFFSET_X,
-            WINDOW_MAIN_Y,
-            WINDOW_MAIN_X)
-
-    return WindowManager(stdscr, container_window, main_window, status_window)
 
 
 def main(stdscr, save_file):
     curses.curs_set(0)
 
-    init_colors()
+    ui.init_colors()
 
-    window_manager = create_windows(stdscr, save_file)
+    window_manager = ui.create_windows(
+            stdscr, "{}: {}".format(APPLICATION_TITLE, save_file))
     try:
         with open(save_file, 'r') as level_definition_file:
             scene = dill.load(level_definition_file)
     except IOError:
         scene = collections.defaultdict(lambda: collections.defaultdict(list))
-    global_state_manager = GlobalStateManager(window_manager, scene, save_file)
+    global_state_manager = EditorGlobalStateManager(
+            window_manager, scene, save_file)
 
     global_state_manager.recompose_main_window()
     window_manager.redraw_all()
