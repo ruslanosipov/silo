@@ -15,6 +15,7 @@ import dill
 import docopt
 
 import gsm
+import tiles
 import ui
 import windowmanager
 
@@ -35,32 +36,6 @@ KEYS = {
     'l': ('move_cursor', 0, 1),
     'x': ('remove', ),
     }
-
-TILE_TYPES = {
-    'door': '+',
-    'floor': '.',
-    'wall': '#',
-
-    'one': '1',
-    'two': '2',
-    'three': '3',
-    'four': '4',
-    'five': '5',
-    'six': '6',
-    'seven': '7',
-    'eight': '8',
-    'nine': '9',
-    'zero': '0',
-    }
-
-TILE_TYPE_SELECT = collections.OrderedDict(sorted(zip(TILE_TYPES.keys(),
-        ["{} {}".format(char, name) for name, char in TILE_TYPES.items()])))
-
-
-class Tile(object):
-
-    def __init__(self, tile_type):
-        self.char = TILE_TYPES[tile_type]
 
 
 def item_selection_prompt(window_manager, items):
@@ -218,7 +193,7 @@ class EditorGlobalStateManager(gsm.GlobalStateManager):
         if enable_append_mode:
             if self.current_tile is None or force_select:
                 tile_name = item_selection_prompt(
-                        self.window_manager, TILE_TYPE_SELECT)
+                        self.window_manager, tiles.TILE_TYPE_SELECT)
                 if tile_name is None:
                     return
                 self.current_tile = tile_name
@@ -226,7 +201,7 @@ class EditorGlobalStateManager(gsm.GlobalStateManager):
                 tile_name = self.current_tile
 
             self.scene[self.cursor_y][self.cursor_x].append(
-                    Tile(self.current_tile))
+                    tiles.Tile(self.current_tile))
             self._set_append_mode()
 
         else:
@@ -249,14 +224,14 @@ class EditorGlobalStateManager(gsm.GlobalStateManager):
         """
         if self.current_tile is None or force_select:
             tile_name = item_selection_prompt(
-                    self.window_manager, TILE_TYPE_SELECT)
+                    self.window_manager, tiles.TILE_TYPE_SELECT)
         else:
             tile_name = self.current_tile
 
         if tile_name is not None:
             self.current_tile = tile_name
             self.scene[self.cursor_y][self.cursor_x].append(
-                    Tile(self.current_tile))
+                    tiles.Tile(self.current_tile))
 
     def exec_move_cursor(self, dy, dx):
         """Move cursor; add or remove objects based on current mode."""
@@ -265,7 +240,7 @@ class EditorGlobalStateManager(gsm.GlobalStateManager):
         self.window_manager.is_recompose_main = True
 
         if self.is_append_mode:
-            self.scene[self.cursor_y][self.cursor_x].append(Tile(
+            self.scene[self.cursor_y][self.cursor_x].append(tiles.Tile(
                 self.current_tile))
 
         if self.is_remove_mode:
