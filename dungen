@@ -1,0 +1,58 @@
+#!/usr/bin/env python
+"""Dungeon generator.
+
+Usage: dungen <level> <width> <height>
+
+Options:
+    -h --help   Show this screen.
+    --version   Show version.
+"""
+
+from __future__ import print_function
+
+import collections
+import random
+
+import dill
+import docopt
+
+import tiles
+
+MIN_ROOM_WIDTH = 3
+MIN_ROOM_HEIGHT = 3
+MAX_ROOM_WIDTH = 16
+MAX_ROOM_HEIGHT = 16
+
+
+def create_room(scene, x, y, width, height):
+    """Creates a room in the scene. Does not handle collisions."""
+
+    for i in xrange(y, y + height):
+        for j in xrange(x, x + width):
+            if i == y or j == x or i == y + height - 1 or j == x + width - 1:
+                tile_name = 'wall'
+            else:
+                tile_name = 'floor'
+            scene[i][j].append(tiles.Tile(tile_name))
+
+
+def main(save_file, level_width, level_height):
+    scene = collections.defaultdict(lambda: collections.defaultdict(list))
+
+    room_width = random.randint(MIN_ROOM_WIDTH, MAX_ROOM_WIDTH)
+    room_height = random.randint(MIN_ROOM_HEIGHT, MAX_ROOM_HEIGHT)
+    x, y = random.randint(0, level_width - room_width), random.randint(0, height - room_height)
+
+    create_room(scene, x, y, room_width, room_height)
+
+    with open(save_file, 'w') as save_file_:
+        dill.dump(scene, save_file_)
+
+if __name__ == "__main__":
+    args = docopt.docopt(__doc__, version="Silo Dungeon Generator v0.1")
+    try:
+        width, height = int(args['<width>']), int(args['<height>'])
+    except ValueError:
+        print("ValueError: <width> and <height> arguments must be integers!")
+        raise docopt.DocoptExit()
+    main(args['<level>'], width, height)
