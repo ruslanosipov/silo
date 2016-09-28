@@ -334,7 +334,10 @@ def main(stdscr, save_file):
     window_manager.redraw_all()
 
     while True:
-        ch = chr(stdscr.getch())
+        try:
+            ch = chr(stdscr.getch())
+        except ValueError:
+            continue
         if ch not in KEYS:
             continue
 
