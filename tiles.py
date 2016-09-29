@@ -17,8 +17,8 @@ TILE_TYPES = {
     'zero': '0',
     }
 
-TILE_TYPE_SELECT = collections.OrderedDict(sorted(zip(TILE_TYPES.keys(),
-        ["{} {}".format(char, name) for name, char in TILE_TYPES.items()])))
+TILE_TYPE_SELECT = collections.OrderedDict(sorted(zip(
+    TILE_TYPES.keys(), ["{} {}".format(char, name) for name, char in TILE_TYPES.items()])))
 
 
 class Tile(object):

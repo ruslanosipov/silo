@@ -2,6 +2,7 @@
 
 import sys
 
+
 class GlobalStateManager(object):
     """Manages variables and methods which must be global.
 

@@ -57,7 +57,7 @@ def get_random_point(x, y, width, height):
         An instance of Vector.
     """
 
-    adj_width, adj_height = width - 2, height - 2 # Ignore rectangle corners here.
+    adj_width, adj_height = width - 2, height - 2  # Ignore rectangle corners here.
     p = adj_width * 2 + adj_height * 2  # Perimeter.
     random_point = random.randint(0, p - 1)
 
