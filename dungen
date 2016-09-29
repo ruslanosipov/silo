@@ -23,7 +23,7 @@ CORRIDOR_CHANCE = 5  # Chance is 1 / CORRIDOR_CHANCE.
 DUNGEON_GENERATION_ATTEMPTS = 128
 LEVEL_HEIGHT = 24
 LEVEL_WIDTH = 79
-MAX_CORRIDOR_LENGTH = 10
+MAX_CORRIDOR_LENGTH = 40
 MAX_DOORS_PER_ROOM = 4
 MAX_ROOM_COUNT = 10
 MAX_ROOM_CREATION_ATTEMPTS = 64
@@ -176,13 +176,15 @@ def _is_floor(scene, x, y):
     return _is_present(scene, x, y) and scene[y][x][0].name == 'floor'
 
 
+def _is_door(scene, x, y):
+    return _is_present(scene, x, y) and scene[y][x][0].name == 'door'
+
+
 def make_walls_and_clean_up(scene, x, y, visited=None):
     """Add walls around the dungeon rooms and corridors, clean up. Basically a DFS."""
     if visited is None:
         visited = set()
 
-    if (x, y) in visited:
-        return
     visited.add((x, y))
 
     if not _is_present(scene, x, y):
@@ -190,16 +192,41 @@ def make_walls_and_clean_up(scene, x, y, visited=None):
         return
 
     # Remove a door if it's not connected to two objects on opposite sides.
+    #
+    # I feel like this deserves some explanation, since it does look a tad bit
+    # odd.  First, I make sure that the door is connected to anything that's
+    # not a floor on the opposite sides. For example, '#+#' or ' +#' is valid,
+    # while ' +.' is not (we might not have all the walls installed at this
+    # point, so we treat empty space as a wall). Now, if the door is connected
+    # to another door, but doesn't have another stable connection - I launch
+    # the DFS again on the connected door regardless of it being visited before.
+    # I do that so that one can catch a connection to a door that's not
+    # connected to anything, something like this: '.++#'. Nice thing is it
+    # works on a chain of doors regardless of it's length. This would even
+    # clean up a snake made out of doors. Who knows, generation is pretty
+    # random.
+
     tile_name = scene[y][x][0].name
     if tile_name == 'door':
-        is_valid = False
-        for (ldx, ldy), (rdx, rdy) in (((0, 1), (0, -1)), ((1, 0), (-1, 0))):
-            if not _is_floor(scene, x + ldx, y + ldy) and not _is_floor(scene, x + rdx, y + rdy):
+        for opposite_sides in (((0, 1), (0, -1)), ((1, 0), (-1, 0))):
+            count = 0
+            hanging_doors = set()
+            is_valid = False
+            for dx, dy in opposite_sides:
+                if not _is_floor(scene, x + dx, y + dy):
+                    count += 1
+                if _is_door(scene, x + dx, y + dy):
+                   hanging_doors.add((x + dx, y + dy))
+            if count == 2:
                 is_valid = True
                 break
+
         if not is_valid:
             scene[y][x].pop()
             scene[y][x].append(tiles.Tile('floor'))
+
+            for nx, ny in hanging_doors:
+                make_walls_and_clean_up(scene, nx, ny, visited)
 
     # Queue neighboring tiles.
     for dy in (-1, 0, 1):
