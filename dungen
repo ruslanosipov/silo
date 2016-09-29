@@ -24,16 +24,47 @@ MAX_ROOM_WIDTH = 16
 MAX_ROOM_HEIGHT = 16
 
 
+def get_random_door_placement(x, y, width, height):
+    """Picks coordinates at the room sides with uniform distribution.
+
+    Args:
+        x -- int
+        y -- int
+        width -- int, room width
+        height -- int, room height
+
+    Returns:
+        Random set of coordinates on the perimeter (corners excluded).
+    """
+    adj_width, adj_height = width - 2, height - 2 # Ignore corners here.
+    p = adj_width * 2 + adj_height * 2
+    random_point = random.randint(0, p - 1)
+
+    if random_point - adj_width < 0:
+        return x + random_point + 1, y
+    random_point -= adj_width
+
+    if random_point - adj_height < 0:
+        return x, y + random_point + 1
+    random_point -= adj_height
+
+    if random_point - adj_width < 0:
+        return x + random_point + 1, y + height - 1
+    random_point -= adj_width
+
+    return x + width - 1, y + random_point + 1
+
+
 def create_room(scene, x, y, width, height):
     """Creates a room in the scene. Does not handle collisions."""
 
-    for i in xrange(y, y + height):
-        for j in xrange(x, x + width):
-            if i == y or j == x or i == y + height - 1 or j == x + width - 1:
+    for j in xrange(y, y + height):
+        for k in xrange(x, x + width):
+            if j == y or k == x or j == y + height - 1 or k == x + width - 1:
                 tile_name = 'wall'
             else:
                 tile_name = 'floor'
-            scene[i][j].append(tiles.Tile(tile_name))
+            scene[j][k].append(tiles.Tile(tile_name))
 
 
 def main(save_file, level_width, level_height):
@@ -44,6 +75,10 @@ def main(save_file, level_width, level_height):
     x, y = random.randint(0, level_width - room_width), random.randint(0, height - room_height)
 
     create_room(scene, x, y, room_width, room_height)
+
+    m, n = get_random_door_placement(x, y, room_width, room_height)
+    scene[n][m].pop()
+    scene[n][m].append(tiles.Tile('door'))
 
     with open(save_file, 'w') as save_file_:
         dill.dump(scene, save_file_)
