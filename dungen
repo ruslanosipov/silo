@@ -43,11 +43,13 @@ Vector = collections.namedtuple('Vector', ['x', 'y', 'dx', 'dy'])
 
 class Dungeon(object):
 
-    def __init__(self, scene, rooms, corridors, loose_ends):
+    def __init__(self, scene, rooms, corridors, loose_ends, any_x, any_y):
         self.scene = scene
         self.rooms = rooms
         self.corridors = corridors
         self.loose_ends = loose_ends
+        self.any_x = any_x
+        self.any_y = any_y
 
 
 def _is_present(scene, x, y):
@@ -170,6 +172,28 @@ def tie_loose_ends(scene, loose_ends):
                     count -= 1
 
 
+def make_walls_and_clean_up(scene, x, y, visited=None):
+    """Add walls around the dungeon rooms and corridors, clean up. Basically a DFS."""
+    if visited is None:
+        visited = set()
+
+    if (x, y) in visited:
+        return
+    visited.add((x, y))
+
+    if not _is_present(scene, x, y):
+        scene[y][x].append(tiles.Tile('wall'))
+        return
+
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == dx == 0:
+                continue
+            if (x + dx, y + dy) in visited:
+                continue
+            make_walls_and_clean_up(scene, x + dx, y + dy, visited)
+
+
 def generate_dungeon():
     """Generate a dungeon.
 
@@ -188,6 +212,7 @@ def generate_dungeon():
     cx, cy = 0, 1  # Direction in which the end of current corridor is pointing.
     attempts = 0  # Attempts to create a current room candidate.
     loose_ends = set()  # Corridors going nowhere.
+    any_x, any_y = None, None
 
     while stack and room_count < MAX_ROOM_COUNT:
         (x, y, dx, dy), was_corridor = stack.pop()
@@ -234,6 +259,8 @@ def generate_dungeon():
 
         # 5. Create a room and remove current room from potential loose ends.
         create_room(scene, nx, ny, room_width, room_height)
+        if (any_x, any_y) == (None, None):
+            any_x, any_y = x, y
         if (x, y) in loose_ends:
             loose_ends.remove((x, y))
         is_first_room = False
@@ -272,7 +299,7 @@ def generate_dungeon():
         # 7. Null the attempts.
         attempts = 0
 
-    return Dungeon(scene, room_count, corridor_count, loose_ends)
+    return Dungeon(scene, room_count, corridor_count, loose_ends, any_x, any_y)
 
 
 def main(save_file):
@@ -285,6 +312,8 @@ def main(save_file):
     _, dungeon = heapq.heappop(dungeons)
 
     tie_loose_ends(dungeon.scene, dungeon.loose_ends)
+
+    make_walls_and_clean_up(dungeon.scene, dungeon.any_x, dungeon.any_y)
 
     with open(save_file, 'w') as save_file_:
         dill.dump(dungeon.scene, save_file_)
