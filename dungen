@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Dungeon generator.
 
-Usage: dungen <level> <width> <height>
+Usage: dungen <level>
 
 Options:
     -h --help   Show this screen.
@@ -11,6 +11,7 @@ Options:
 from __future__ import print_function
 
 import collections
+import heapq
 import random
 
 import dill
@@ -18,13 +19,16 @@ import docopt
 
 import tiles
 
-CORRIDOR_CHANCE = 2  # Chance is 1 / CORRIDOR_CHANCE.
-MAX_CORRIDOR_LENGTH = 16
+CORRIDOR_CHANCE = 3  # Chance is 1 / CORRIDOR_CHANCE.
+DUNGEON_GENERATION_ATTEMPTS = 100
+LEVEL_HEIGHT = 24
+LEVEL_WIDTH = 79
+MAX_CORRIDOR_LENGTH = 10
 MAX_DOORS_PER_ROOM = 4
+MAX_ROOM_COUNT = 10
 MAX_ROOM_CREATION_ATTEMPTS = 64
-MAX_ROOM_COUNT = 32
-MAX_ROOM_HEIGHT = 16
-MAX_ROOM_WIDTH = 16
+MAX_ROOM_HEIGHT = 8
+MAX_ROOM_WIDTH = 8
 MIN_CORRIDOR_LENGTH = 1
 MIN_ROOM_HEIGHT = 3
 MIN_ROOM_WIDTH = 3
@@ -33,6 +37,16 @@ RoomCandidate = collections.namedtuple('RoomCandidate', ['vector', 'is_corridor'
 Vector = collections.namedtuple('Vector', ['x', 'y', 'dx', 'dy'])
 
 # TODO: Move the top right corner of the room randomly on one axis.
+# TODO: Make sure rooms don't get out of given boundaries.
+# TODO: Keep statistics of dungeon generation, plot them on a graph?
+
+
+class Dungeon(object):
+
+    def __init__(self, scene, rooms, corridors):
+        self.scene = scene
+        self.rooms = rooms
+        self.corridors = corridors
 
 
 def _is_present(scene, x, y):
@@ -96,9 +110,9 @@ def is_room_present(scene, x, y, width, height):
     return False
 
 
-def are_coordinates_valid(x, y, room_width, room_height, level_width, level_height):
+def are_coordinates_valid(x, y, room_width, room_height):
     """Check if coordinates are within the desired canvas."""
-    return x > 0 and y > 0 and x + room_width < level_width and y + room_height < level_height
+    return x > 0 and y > 0 and (x + room_width < LEVEL_WIDTH) and (y + room_height < LEVEL_HEIGHT)
 
 
 def create_room(scene, x, y, width, height):
@@ -133,13 +147,20 @@ def find_adjucent_room_and_add_a_door(scene, x, y, cx, cy):
     return False
 
 
-def main(save_file, level_width, level_height):
+def generate_dungeon():
+    """Generate a dungeon.
+
+    A lot of constants at the top of the module are used for this.
+
+    Returns:
+        A Dungeon instance.
+    """
     scene = collections.defaultdict(lambda: collections.defaultdict(list))
 
     is_first_room = True
-    room_count = 0
-    x = random.randint(MAX_ROOM_WIDTH, level_width - MAX_ROOM_WIDTH)
-    y = random.randint(MAX_ROOM_HEIGHT, level_height - MAX_ROOM_HEIGHT)
+    room_count, corridor_count = 0, 0
+    x = random.randint(MAX_ROOM_WIDTH, LEVEL_WIDTH - MAX_ROOM_WIDTH)
+    y = random.randint(MAX_ROOM_HEIGHT, LEVEL_HEIGHT - MAX_ROOM_HEIGHT)
     stack = [RoomCandidate(vector=Vector(x=x, y=y, dx=1, dy=0), is_corridor=False)]
     cx, cy = 0, 1  # Direction in which the end of current corridor is pointing.
     attempts = 0  # Attempts to create a current room candidate.
@@ -173,7 +194,7 @@ def main(save_file, level_width, level_height):
         nx, ny = get_drawing_coordinates(x, y, room_width, room_height, dx, dy)
 
         # 3. Continue if coordinates are outside of map boundaries or there's an overlap.
-        if not are_coordinates_valid(nx, ny, room_width, room_height, level_width, level_height) \
+        if not are_coordinates_valid(nx, ny, room_width, room_height) \
                 or is_room_present(scene, nx, ny, room_width, room_height):
             if attempts < MAX_ROOM_CREATION_ATTEMPTS:
                 stack.append(RoomCandidate(
@@ -196,6 +217,8 @@ def main(save_file, level_width, level_height):
 
         # 6. Queue more rooms.
         if is_corridor:
+            corridor_count += 1
+
             # Points where the corridor finished.
             nx = x + cx * room_width
             ny = y + cy * room_height
@@ -230,14 +253,21 @@ def main(save_file, level_width, level_height):
     for x, y in loose_ends:
         scene[y][x].append(tiles.Tile('two'))
 
+    return Dungeon(scene, room_count, corridor_count)
+
+
+def main(save_file):
+    dungeons = []
+
+    for _ in xrange(DUNGEON_GENERATION_ATTEMPTS):
+        dungeon = generate_dungeon()
+        heapq.heappush(dungeons, (-dungeon.rooms, dungeon))  # Max priority queue, so negative pri.
+
+    _, dungeon = heapq.heappop(dungeons)
+
     with open(save_file, 'w') as save_file_:
-        dill.dump(scene, save_file_)
+        dill.dump(dungeon.scene, save_file_)
 
 if __name__ == "__main__":
     args = docopt.docopt(__doc__, version="Silo Dungeon Generator v0.1")
-    try:
-        width, height = int(args['<width>']), int(args['<height>'])
-    except ValueError:
-        print("ValueError: <width> and <height> arguments must be integers!")
-        raise docopt.DocoptExit()
-    main(args['<level>'], width, height)
+    main(args['<level>'])

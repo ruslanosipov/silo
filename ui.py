@@ -37,15 +37,15 @@ def create_windows(stdscr, title):
     stdscr.chgat(-1, curses.A_REVERSE)
 
     status_window = curses.newwin(
-            1, windowmanager.WINDOW_STATUS_WIDTH, curses.LINES - 1, 0)
+        1, windowmanager.WINDOW_STATUS_WIDTH, curses.LINES - 1, 0)
 
     container_window = curses.newwin(curses.LINES - 2, curses.COLS, 1, 0)
     container_window.box()
     main_window = container_window.subwin(
-            curses.LINES - windowmanager.WINDOW_MAIN_OFFSET_Y,
-            curses.COLS - windowmanager.WINDOW_MAIN_OFFSET_X,
-            windowmanager.WINDOW_MAIN_Y,
-            windowmanager.WINDOW_MAIN_X)
+        curses.LINES - windowmanager.WINDOW_MAIN_OFFSET_Y,
+        curses.COLS - windowmanager.WINDOW_MAIN_OFFSET_X,
+        windowmanager.WINDOW_MAIN_Y,
+        windowmanager.WINDOW_MAIN_X)
 
     return windowmanager.WindowManager(
         stdscr, container_window, main_window, status_window)
