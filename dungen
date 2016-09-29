@@ -20,7 +20,7 @@ import docopt
 import tiles
 
 CORRIDOR_CHANCE = 3  # Chance is 1 / CORRIDOR_CHANCE.
-DUNGEON_GENERATION_ATTEMPTS = 100
+DUNGEON_GENERATION_ATTEMPTS = 256
 LEVEL_HEIGHT = 24
 LEVEL_WIDTH = 79
 MAX_CORRIDOR_LENGTH = 10
@@ -43,10 +43,11 @@ Vector = collections.namedtuple('Vector', ['x', 'y', 'dx', 'dy'])
 
 class Dungeon(object):
 
-    def __init__(self, scene, rooms, corridors):
+    def __init__(self, scene, rooms, corridors, loose_ends):
         self.scene = scene
         self.rooms = rooms
         self.corridors = corridors
+        self.loose_ends = loose_ends
 
 
 def _is_present(scene, x, y):
@@ -145,6 +146,28 @@ def find_adjucent_room_and_add_a_door(scene, x, y, cx, cy):
         scene[y][x].append(tiles.Tile('door'))
         return True
     return False
+
+
+def tie_loose_ends(scene, loose_ends):
+    """Remove empty corridors left after dungeon generation."""
+    stack = []
+    for le_x, le_y in loose_ends:
+        for dx, dy in ((0, 2), (0, -2), (-2, 0), (0, 2)):
+            if _is_present(scene, le_x + dx, le_y + dy):
+                stack.append((le_x + dx, le_y + dy))
+        while stack:
+            x, y = stack.pop()
+            count = 0
+            for dx, dy in ((0, 1), (1, 0), (-1, 0), (0, -1)):
+                if _is_present(scene, x + dx, y + dy):
+                    stack.append((x + dx, y + dy))
+                    count += 1
+            if count == 1:
+                del scene[y][x]
+            else:
+                while count:
+                    stack.pop()
+                    count -= 1
 
 
 def generate_dungeon():
@@ -249,11 +272,7 @@ def generate_dungeon():
         # 7. Null the attempts.
         attempts = 0
 
-    # TODO: Actually tie the loose ends.
-    for x, y in loose_ends:
-        scene[y][x].append(tiles.Tile('two'))
-
-    return Dungeon(scene, room_count, corridor_count)
+    return Dungeon(scene, room_count, corridor_count, loose_ends)
 
 
 def main(save_file):
@@ -264,6 +283,8 @@ def main(save_file):
         heapq.heappush(dungeons, (-dungeon.rooms, dungeon))  # Max priority queue, so negative pri.
 
     _, dungeon = heapq.heappop(dungeons)
+
+    tie_loose_ends(dungeon.scene, dungeon.loose_ends)
 
     with open(save_file, 'w') as save_file_:
         dill.dump(dungeon.scene, save_file_)
