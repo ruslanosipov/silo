@@ -24,4 +24,5 @@ TILE_TYPE_SELECT = collections.OrderedDict(sorted(zip(
 class Tile(object):
 
     def __init__(self, tile_type):
+        self.name = tile_type
         self.char = TILE_TYPES[tile_type]

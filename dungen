@@ -19,8 +19,8 @@ import docopt
 
 import tiles
 
-CORRIDOR_CHANCE = 3  # Chance is 1 / CORRIDOR_CHANCE.
-DUNGEON_GENERATION_ATTEMPTS = 256
+CORRIDOR_CHANCE = 5  # Chance is 1 / CORRIDOR_CHANCE.
+DUNGEON_GENERATION_ATTEMPTS = 128
 LEVEL_HEIGHT = 24
 LEVEL_WIDTH = 79
 MAX_CORRIDOR_LENGTH = 10
@@ -172,6 +172,10 @@ def tie_loose_ends(scene, loose_ends):
                     count -= 1
 
 
+def _is_floor(scene, x, y):
+    return _is_present(scene, x, y) and scene[y][x][0].name == 'floor'
+
+
 def make_walls_and_clean_up(scene, x, y, visited=None):
     """Add walls around the dungeon rooms and corridors, clean up. Basically a DFS."""
     if visited is None:
@@ -185,6 +189,19 @@ def make_walls_and_clean_up(scene, x, y, visited=None):
         scene[y][x].append(tiles.Tile('wall'))
         return
 
+    # Remove a door if it's not connected to two objects on opposite sides.
+    tile_name = scene[y][x][0].name
+    if tile_name == 'door':
+        is_valid = False
+        for (ldx, ldy), (rdx, rdy) in (((0, 1), (0, -1)), ((1, 0), (-1, 0))):
+            if not _is_floor(scene, x + ldx, y + ldy) and not _is_floor(scene, x + rdx, y + rdy):
+                is_valid = True
+                break
+        if not is_valid:
+            scene[y][x].pop()
+            scene[y][x].append(tiles.Tile('floor'))
+
+    # Queue neighboring tiles.
     for dy in (-1, 0, 1):
         for dx in (-1, 0, 1):
             if dy == dx == 0:
