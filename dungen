@@ -21,6 +21,7 @@ import tiles
 
 CORRIDOR_CHANCE = 5  # Chance is 1 / CORRIDOR_CHANCE.
 DUNGEON_GENERATION_ATTEMPTS = 128
+DUNGEON_QUALITY_FACTOR = 8
 LEVEL_HEIGHT = 24
 LEVEL_WIDTH = 79
 MAX_CORRIDOR_LENGTH = 40
@@ -43,13 +44,15 @@ Vector = collections.namedtuple('Vector', ['x', 'y', 'dx', 'dy'])
 
 class Dungeon(object):
 
-    def __init__(self, scene, rooms, corridors, loose_ends, any_x, any_y):
+    def __init__(self, scene, rooms, corridors, loose_ends, any_x, any_y, width, height):
         self.scene = scene
         self.rooms = rooms
         self.corridors = corridors
         self.loose_ends = loose_ends
         self.any_x = any_x
         self.any_y = any_y
+        self.width = width
+        self.height = height
 
 
 def _is_present(scene, x, y):
@@ -257,6 +260,8 @@ def generate_dungeon():
     attempts = 0  # Attempts to create a current room candidate.
     loose_ends = set()  # Corridors going nowhere.
     any_x, any_y = None, None
+    min_x, min_y = None, None
+    max_x, max_y = None, None
 
     while stack and room_count < MAX_ROOM_COUNT:
         (x, y, dx, dy), was_corridor = stack.pop()
@@ -303,11 +308,21 @@ def generate_dungeon():
 
         # 5. Create a room and remove current room from potential loose ends.
         create_room(scene, nx, ny, room_width, room_height)
-        if (any_x, any_y) == (None, None):
-            any_x, any_y = x, y
         if (x, y) in loose_ends:
             loose_ends.remove((x, y))
         is_first_room = False
+
+        # 5.1 Save some metrics.
+        if (any_x, any_y) == (None, None):
+            any_x, any_y = x, y
+        if min_x is None or nx < min_x:
+            min_x = nx
+        if min_y is None or ny < min_y:
+            min_y = ny
+        if max_x is None or nx + room_width > max_x:
+            max_x = nx + room_width
+        if max_y is None or ny + room_height > max_y:
+            max_y = ny + room_height
 
         # 6. Queue more rooms.
         if is_corridor:
@@ -343,7 +358,8 @@ def generate_dungeon():
         # 7. Null the attempts.
         attempts = 0
 
-    return Dungeon(scene, room_count, corridor_count, loose_ends, any_x, any_y)
+    return Dungeon(
+        scene, room_count, corridor_count, loose_ends, any_x, any_y, max_x - min_x, max_y - min_y)
 
 
 def main(save_file):
@@ -351,9 +367,22 @@ def main(save_file):
 
     for _ in xrange(DUNGEON_GENERATION_ATTEMPTS):
         dungeon = generate_dungeon()
-        heapq.heappush(dungeons, (-dungeon.rooms, dungeon))  # Max priority queue, so negative pri.
+        # This is technically a max priority queue, so set negative priority.
+        heapq.heappush(dungeons, (-(dungeon.width * dungeon.height), dungeon))
 
-    _, dungeon = heapq.heappop(dungeons)
+    # I pick the dungeon with the biggest area, but that's really not true.
+    # It's more about a space dungeon occupies, without having to fill it up
+    # with much. Furthermore, I don't handle loose ends cleanup when
+    # determining the size, so it's not entirely accurate. After that, I look
+    # through top DUNGEON_GENERATION_ATTEMPTS / DUNGEON_QUALITY_FACTOR items
+    # and pick the one with the highest number of rooms to make up for that
+    # fact. Tends to work most of the time.
+
+    dungeon = None
+    for _ in xrange(DUNGEON_GENERATION_ATTEMPTS / DUNGEON_QUALITY_FACTOR):
+        _, current_dungeon = heapq.heappop(dungeons)
+        if dungeon is None or current_dungeon.rooms > dungeon.rooms:
+            dungeon = current_dungeon
 
     tie_loose_ends(dungeon.scene, dungeon.loose_ends)
 
