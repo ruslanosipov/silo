@@ -166,7 +166,7 @@ class EditorGlobalStateManager(gsm.GlobalStateManager):
         for y in self.scene:
             for x in self.scene[y]:
                 color = ui.COLOR_BLACK_ON_WHITE \
-                        if len(self.scene[y][x]) > 1 else ui.COLOR_WHITE
+                        if len(self.scene[y][x]) > 2 else ui.COLOR_WHITE
                 main_window.addstr(y, x, self.scene[y][x][-1].char,
                                    curses.color_pair(color))
         if self.is_remove_mode:

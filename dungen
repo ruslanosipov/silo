@@ -26,11 +26,13 @@ LEVEL_HEIGHT = 24
 LEVEL_WIDTH = 79
 MAX_CORRIDOR_LENGTH = 40
 MAX_DOORS_PER_ROOM = 4
+MAX_ENEMY_COUNT = 20
 MAX_ROOM_COUNT = 10
 MAX_ROOM_CREATION_ATTEMPTS = 64
 MAX_ROOM_HEIGHT = 8
 MAX_ROOM_WIDTH = 8
 MIN_CORRIDOR_LENGTH = 3
+MIN_ENEMY_COUNT = 5
 MIN_ROOM_HEIGHT = 3
 MIN_ROOM_WIDTH = 3
 
@@ -38,13 +40,11 @@ RoomCandidate = collections.namedtuple('RoomCandidate', ['vector', 'is_corridor'
 Vector = collections.namedtuple('Vector', ['x', 'y', 'dx', 'dy'])
 
 # TODO: Move the top right corner of the room randomly on one axis.
-# TODO: Make sure rooms don't get out of given boundaries.
-# TODO: Keep statistics of dungeon generation, plot them on a graph?
 
 
 class Dungeon(object):
 
-    def __init__(self, scene, rooms, corridors, loose_ends, any_x, any_y, width, height):
+    def __init__(self, scene, rooms, corridors, loose_ends, any_x, any_y, width, height, enemies):
         self.scene = scene
         self.rooms = rooms
         self.corridors = corridors
@@ -53,6 +53,7 @@ class Dungeon(object):
         self.any_y = any_y
         self.width = width
         self.height = height
+        self.enemies = enemies
 
 
 def _is_present(scene, x, y):
@@ -121,13 +122,44 @@ def are_coordinates_valid(x, y, room_width, room_height):
     return x > 0 and y > 0 and (x + room_width < LEVEL_WIDTH) and (y + room_height < LEVEL_HEIGHT)
 
 
-def create_room(scene, x, y, width, height):
-    """Creates a room in the scene. Does not handle collisions."""
+def create_room(scene, x, y, width, height, enemies, enemy_chance):
+    """Creates a room in the scene. Does not handle collisions. Places enemies.
 
-    for j in xrange(y, y + height):
-        for k in xrange(x, x + width):
+    Enemies are placed with equal distribution (per dungeon) throughout the
+    floor tiles. The distribution is random because each time we add a tile to
+    the dungeon, our chance of placing an enemy at that tile is 1 / number of
+    tiles already placed + current tile. So, for a dungeon of 4 tiles and 1
+    enemy to be placed:
+
+    1. Chance of enemy being placed here is 1/1.
+    2. Chance of enemy moved here is 1/2.
+    3. Chance of enemy being moved here is 1/3.
+    4. Chance of enemy location updated to 4 is 1/4.
+
+    At the end we end up with 1/4 chance for every tile. The reason we use this
+    is because we don't know the final number of 
+
+    Args:
+        scene -- a defaultdict of defaultdicts(list)
+        x -- int
+        y -- int
+        width -- int
+        height -- int
+        enemies -- list of (x, y) enemy coordinates
+        enemy_chance -- how many tiles have we placed so far (see above)
+
+    Returns:
+        Updated enemy_chance (total number of floor tiles placed in the dungeon)."""
+
+    for k in xrange(y, y + height):
+        for j in xrange(x, x + width):
+            for i in xrange(len(enemies)):
+                if random.randint(0, enemy_chance) == 0:
+                    enemies[i] = (j, k)
+            enemy_chance += 1
             tile_name = 'floor'
-            scene[j][k].append(tiles.Tile(tile_name))
+            scene[k][j].append(tiles.Tile(tile_name))
+    return enemy_chance
 
 
 def find_adjucent_room_and_add_a_door(scene, x, y, cx, cy):
@@ -153,8 +185,8 @@ def find_adjucent_room_and_add_a_door(scene, x, y, cx, cy):
     return False
 
 
-def tie_loose_ends(scene, loose_ends):
-    """Remove empty corridors left after dungeon generation."""
+def tie_loose_ends(scene, loose_ends, enemies):
+    """Remove empty corridors left after dungeon generation. Drops enemies from removed tiles."""
     stack = []
     for le_x, le_y in loose_ends:
         for dx, dy in ((0, 2), (0, -2), (-2, 0), (0, 2)):
@@ -169,6 +201,8 @@ def tie_loose_ends(scene, loose_ends):
                     count += 1
             if count == 1:
                 del scene[y][x]
+                if (x, y) in enemies:
+                    enemies.remove((x, y))
             else:
                 while count:
                     stack.pop()
@@ -241,6 +275,12 @@ def make_walls_and_clean_up(scene, x, y, visited=None):
             make_walls_and_clean_up(scene, x + dx, y + dy, visited)
 
 
+def sprinkle_enemies(scene, enemies):
+    """Place enemies around the scene."""
+    for (x, y) in enemies:
+        scene[y][x].append(tiles.Tile('enemy'))
+
+
 def generate_dungeon():
     """Generate a dungeon.
 
@@ -262,6 +302,9 @@ def generate_dungeon():
     any_x, any_y = None, None
     min_x, min_y = None, None
     max_x, max_y = None, None
+    enemy_count = random.randint(MIN_ENEMY_COUNT, MAX_ENEMY_COUNT)
+    enemy_chance = 0
+    enemies = [None for _ in xrange(enemy_count)]
 
     while stack and room_count < MAX_ROOM_COUNT:
         (x, y, dx, dy), was_corridor = stack.pop()
@@ -307,7 +350,8 @@ def generate_dungeon():
                 scene[y - dy][x - dx].append(tiles.Tile('door'))
 
         # 5. Create a room and remove current room from potential loose ends.
-        create_room(scene, nx, ny, room_width, room_height)
+        enemy_chance = create_room(
+            scene, nx, ny, room_width, room_height, enemies, enemy_chance)
         if (x, y) in loose_ends:
             loose_ends.remove((x, y))
         is_first_room = False
@@ -359,7 +403,7 @@ def generate_dungeon():
         attempts = 0
 
     return Dungeon(
-        scene, room_count, corridor_count, loose_ends, any_x, any_y, max_x - min_x, max_y - min_y)
+        scene, room_count, corridor_count, loose_ends, any_x, any_y, max_x - min_x, max_y - min_y, set(enemies))
 
 
 def main(save_file):
@@ -384,9 +428,11 @@ def main(save_file):
         if dungeon is None or current_dungeon.rooms > dungeon.rooms:
             dungeon = current_dungeon
 
-    tie_loose_ends(dungeon.scene, dungeon.loose_ends)
+    tie_loose_ends(dungeon.scene, dungeon.loose_ends, dungeon.enemies)
 
     make_walls_and_clean_up(dungeon.scene, dungeon.any_x, dungeon.any_y)
+
+    sprinkle_enemies(dungeon.scene, dungeon.enemies)
 
     with open(save_file, 'w') as save_file_:
         dill.dump(dungeon.scene, save_file_)

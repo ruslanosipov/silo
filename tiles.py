@@ -5,6 +5,8 @@ TILE_TYPES = {
     'floor': '.',
     'wall': '#',
 
+    'enemy': 'e',
+
     'one': '1',
     'two': '2',
     'three': '3',
