@@ -44,7 +44,8 @@ Vector = collections.namedtuple('Vector', ['x', 'y', 'dx', 'dy'])
 
 class Dungeon(object):
 
-    def __init__(self, scene, rooms, corridors, loose_ends, any_x, any_y, width, height, enemies):
+    def __init__(
+            self, scene, rooms, corridors, loose_ends, any_x, any_y, width, height, tile_count):
         self.scene = scene
         self.rooms = rooms
         self.corridors = corridors
@@ -53,7 +54,7 @@ class Dungeon(object):
         self.any_y = any_y
         self.width = width
         self.height = height
-        self.enemies = enemies
+        self.tile_count = tile_count
 
 
 def _is_present(scene, x, y):
@@ -122,22 +123,8 @@ def are_coordinates_valid(x, y, room_width, room_height):
     return x > 0 and y > 0 and (x + room_width < LEVEL_WIDTH) and (y + room_height < LEVEL_HEIGHT)
 
 
-def create_room(scene, x, y, width, height, enemies, enemy_chance):
-    """Creates a room in the scene. Does not handle collisions. Places enemies.
-
-    Enemies are placed with equal distribution (per dungeon) throughout the
-    floor tiles. The distribution is random because each time we add a tile to
-    the dungeon, our chance of placing an enemy at that tile is 1 / number of
-    tiles already placed + current tile. So, for a dungeon of 4 tiles and 1
-    enemy to be placed:
-
-    1. Chance of enemy being placed here is 1/1.
-    2. Chance of enemy moved here is 1/2.
-    3. Chance of enemy being moved here is 1/3.
-    4. Chance of enemy location updated to 4 is 1/4.
-
-    At the end we end up with 1/4 chance for every tile. The reason we use this
-    is because we don't know the final number of 
+def create_room(scene, x, y, width, height):
+    """Creates a room in the scene. Does not handle collisions.
 
     Args:
         scene -- a defaultdict of defaultdicts(list)
@@ -145,21 +132,15 @@ def create_room(scene, x, y, width, height, enemies, enemy_chance):
         y -- int
         width -- int
         height -- int
-        enemies -- list of (x, y) enemy coordinates
-        enemy_chance -- how many tiles have we placed so far (see above)
 
     Returns:
-        Updated enemy_chance (total number of floor tiles placed in the dungeon)."""
+        Number of tiles placed.
+    """
 
     for k in xrange(y, y + height):
         for j in xrange(x, x + width):
-            for i in xrange(len(enemies)):
-                if random.randint(0, enemy_chance) == 0:
-                    enemies[i] = (j, k)
-            enemy_chance += 1
-            tile_name = 'floor'
-            scene[k][j].append(tiles.Tile(tile_name))
-    return enemy_chance
+            scene[k][j].append(tiles.Tile('floor'))
+    return width * height
 
 
 def find_adjucent_room_and_add_a_door(scene, x, y, cx, cy):
@@ -185,9 +166,12 @@ def find_adjucent_room_and_add_a_door(scene, x, y, cx, cy):
     return False
 
 
-def tie_loose_ends(scene, loose_ends, enemies):
-    """Remove empty corridors left after dungeon generation. Drops enemies from removed tiles."""
+def tie_loose_ends(scene, loose_ends):
+    """Remove empty corridors left after dungeon generation."""
+
     stack = []
+    tiles_removed = 0
+
     for le_x, le_y in loose_ends:
         for dx, dy in ((0, 2), (0, -2), (-2, 0), (0, 2)):
             if _is_present(scene, le_x + dx, le_y + dy):
@@ -201,12 +185,12 @@ def tie_loose_ends(scene, loose_ends, enemies):
                     count += 1
             if count == 1:
                 del scene[y][x]
-                if (x, y) in enemies:
-                    enemies.remove((x, y))
+                tiles_removed += 1
             else:
                 while count:
                     stack.pop()
                     count -= 1
+    return tiles_removed
 
 
 def _is_floor(scene, x, y):
@@ -217,8 +201,24 @@ def _is_door(scene, x, y):
     return _is_present(scene, x, y) and scene[y][x][0].name == 'door'
 
 
-def make_walls_and_clean_up(scene, x, y, visited=None):
-    """Add walls around the dungeon rooms and corridors, clean up. Basically a DFS."""
+def cleanup_dungeon(scene, x, y, enemies, current_tile=0, visited=None):
+    """Add walls around the dungeon rooms and corridors, clean up, add enemies.
+    
+    Recursive function, basically a depth first search. This adds walls, cleans
+    up hanging doors, and randomly determines coordinates for enemy placements
+    (with even distribution).
+
+    Args:
+        scene -- defaultdict of defaultdicts(list)
+        x -- int
+        y -- int
+        enemies -- a dict with int keys (tile #), values will be populated with (x, y)
+        current_tile -- number of floor tile the function is at (for placing enemies)
+        visited -- set of visited coordinates for depth first search
+
+    Returns:
+        Number of floor tiles (for enemy placement).
+    """
     if visited is None:
         visited = set()
 
@@ -226,7 +226,12 @@ def make_walls_and_clean_up(scene, x, y, visited=None):
 
     if not _is_present(scene, x, y):
         scene[y][x].append(tiles.Tile('wall'))
-        return
+        return current_tile
+
+    if _is_floor(scene, x, y):
+        if current_tile in enemies:
+            enemies[current_tile] = (x, y)
+        current_tile += 1
 
     # Remove a door if it's not connected to two objects on opposite sides.
     #
@@ -263,7 +268,8 @@ def make_walls_and_clean_up(scene, x, y, visited=None):
             scene[y][x].append(tiles.Tile('floor'))
 
             for nx, ny in hanging_doors:
-                make_walls_and_clean_up(scene, nx, ny, visited)
+                # Don't increment current_tile here since it's a reiteration.
+                cleanup_dungeon(scene, nx, ny, enemies, current_tile, visited)
 
     # Queue neighboring tiles.
     for dy in (-1, 0, 1):
@@ -272,12 +278,14 @@ def make_walls_and_clean_up(scene, x, y, visited=None):
                 continue
             if (x + dx, y + dy) in visited:
                 continue
-            make_walls_and_clean_up(scene, x + dx, y + dy, visited)
+            current_tile = cleanup_dungeon(scene, x + dx, y + dy, enemies, current_tile, visited)
+
+    return current_tile
 
 
 def sprinkle_enemies(scene, enemies):
     """Place enemies around the scene."""
-    for (x, y) in enemies:
+    for (x, y) in enemies.values():
         scene[y][x].append(tiles.Tile('enemy'))
 
 
@@ -302,9 +310,7 @@ def generate_dungeon():
     any_x, any_y = None, None
     min_x, min_y = None, None
     max_x, max_y = None, None
-    enemy_count = random.randint(MIN_ENEMY_COUNT, MAX_ENEMY_COUNT)
-    enemy_chance = 0
-    enemies = [None for _ in xrange(enemy_count)]
+    tile_count = 0
 
     while stack and room_count < MAX_ROOM_COUNT:
         (x, y, dx, dy), was_corridor = stack.pop()
@@ -350,8 +356,7 @@ def generate_dungeon():
                 scene[y - dy][x - dx].append(tiles.Tile('door'))
 
         # 5. Create a room and remove current room from potential loose ends.
-        enemy_chance = create_room(
-            scene, nx, ny, room_width, room_height, enemies, enemy_chance)
+        tile_count += create_room(scene, nx, ny, room_width, room_height)
         if (x, y) in loose_ends:
             loose_ends.remove((x, y))
         is_first_room = False
@@ -403,7 +408,15 @@ def generate_dungeon():
         attempts = 0
 
     return Dungeon(
-        scene, room_count, corridor_count, loose_ends, any_x, any_y, max_x - min_x, max_y - min_y, set(enemies))
+        scene,
+        room_count,
+        corridor_count,
+        loose_ends,
+        any_x,
+        any_y,
+        max_x - min_x,
+        max_y - min_y,
+        tile_count)
 
 
 def main(save_file):
@@ -428,11 +441,13 @@ def main(save_file):
         if dungeon is None or current_dungeon.rooms > dungeon.rooms:
             dungeon = current_dungeon
 
-    tie_loose_ends(dungeon.scene, dungeon.loose_ends, dungeon.enemies)
+    dungeon.tile_count -= tie_loose_ends(dungeon.scene, dungeon.loose_ends)
 
-    make_walls_and_clean_up(dungeon.scene, dungeon.any_x, dungeon.any_y)
+    enemy_count = random.randint(MIN_ENEMY_COUNT, MAX_ENEMY_COUNT)
+    enemies = dict.fromkeys(random.sample(xrange(dungeon.tile_count), enemy_count))
+    cleanup_dungeon(dungeon.scene, dungeon.any_x, dungeon.any_y, enemies)
 
-    sprinkle_enemies(dungeon.scene, dungeon.enemies)
+    sprinkle_enemies(dungeon.scene, enemies)
 
     with open(save_file, 'w') as save_file_:
         dill.dump(dungeon.scene, save_file_)
