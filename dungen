@@ -17,6 +17,7 @@ import random
 import dill
 import docopt
 
+import mobs
 import tiles
 
 CORRIDOR_CHANCE = 5  # Chance is 1 / CORRIDOR_CHANCE.
@@ -35,6 +36,7 @@ MIN_CORRIDOR_LENGTH = 3
 MIN_ENEMY_COUNT = 5
 MIN_ROOM_HEIGHT = 3
 MIN_ROOM_WIDTH = 3
+PLAYER_LEVEL = 1
 
 RoomCandidate = collections.namedtuple('RoomCandidate', ['vector', 'is_corridor'])
 Vector = collections.namedtuple('Vector', ['x', 'y', 'dx', 'dy'])
@@ -286,7 +288,7 @@ def cleanup_dungeon(scene, x, y, enemies, current_tile=0, visited=None):
 def sprinkle_enemies(scene, enemies):
     """Place enemies around the scene."""
     for (x, y) in enemies.values():
-        scene[y][x].append(tiles.Tile('enemy'))
+        scene[y][x].append(mobs.Mob('rat'))
 
 
 def generate_dungeon():
