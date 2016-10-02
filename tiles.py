@@ -9,7 +9,7 @@ TILE_TYPES = {
 }
 
 TILE_TYPES.update(
-        {'L{} {}'.format(level, name): char for char, name, level in mobs.MOB_TYPES.values()})
+    {'L{} {}'.format(level, name): char for char, name, level in mobs.MOB_TYPES.values()})
 
 TILE_TYPE_SELECT = collections.OrderedDict(sorted(zip(
     TILE_TYPES.keys(), ["{} {}".format(char, name) for name, char in TILE_TYPES.items()])))

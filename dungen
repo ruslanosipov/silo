@@ -288,7 +288,7 @@ def cleanup_dungeon(scene, x, y, enemies, current_tile=0, visited=None):
 def sprinkle_enemies(scene, enemies):
     """Place enemies around the scene."""
     for (x, y) in enemies.values():
-        scene[y][x].append(mobs.Mob('rat'))
+        scene[y][x].append(mobs.generate_random_mob(PLAYER_LEVEL))
 
 
 def generate_dungeon():
