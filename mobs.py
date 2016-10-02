@@ -38,6 +38,8 @@ def generate_random_mob(player_level):
     RANDOM_MOB_LEVEL_FACTOR, with 0.5 halving the probability of getting a
     higher/lower level mob with each level delta.
     """
+
+    # TODO: This MUST use dungeon level factor and not player level. Argh.
     intervals, next_i = [], 0
     for name, (_, _, level) in MOB_TYPES.iteritems():
         diff = max(player_level, level) - min(player_level, level)
